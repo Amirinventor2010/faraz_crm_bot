@@ -29,6 +29,13 @@ class Client(Base):
     __tablename__ = "clients"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+
+    # ✅ تلگرام آی‌دی مشتری برای ورود به پنل مشتری
+    #   - unique=True: هر مشتری یک آی‌دی منحصربه‌فرد داشته باشد
+    #   - index=True: لاگین سریع‌تر
+    #   - nullable=True: اگر آی‌دی هنوز مشخص نیست، ثبت مشتری ممکن است
+    telegram_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True, nullable=True)
+
     business_name: Mapped[str] = mapped_column(String(200))
     industry: Mapped[str | None]
     contract_date: Mapped[str | None]
@@ -40,8 +47,6 @@ class Client(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default=STATUS_ACTIVE)
     assigned_staff_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-    # ✅ برای ورود خودکار مشتری
-    telegram_id: Mapped[int | None] = mapped_column(Integer, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     assigned_staff: Mapped[User | None] = relationship(back_populates="clients")
