@@ -168,7 +168,6 @@ async def add_staff_confirm_or_cancel(cb: types.CallbackQuery, state: FSMContext
         return
 
     data = await state.get_data()
-    # اگر به هر دلیلی status نبود، پیش‌فرض فعال
     status = data.get("status", STATUS_ACTIVE)
 
     async with AsyncSessionLocal() as session:
@@ -188,9 +187,10 @@ async def add_staff_confirm_or_cancel(cb: types.CallbackQuery, state: FSMContext
     await state.clear()
     await cb.message.answer("✅ نیروی جدید ثبت شد.", reply_markup=admin_setup_kb())
 
-# ---------- ثبت مشتری ----------
+# ---------- ثبت مشتری (با مرحله Telegram ID) ----------
 class AddClient(StatesGroup):
     business_name = State()
+    telegram_id = State()       # 👈 مرحله جدید برای دریافت آی‌دی مشتری
     industry = State()
     contract_date = State()
     platforms = State()
@@ -218,14 +218,32 @@ async def client_business_name(msg: types.Message, state: FSMContext):
         await msg.answer("❌ نام کسب‌وکار نمی‌تواند خالی باشد.")
         return
     await state.update_data(business_name=name)
+    await state.set_state(AddClient.telegram_id)
+    await msg.answer("Telegram ID عددی مشتری؟ (اختیاری – برای عبور، -)", reply_markup=back_reply_kb())
+
+@router.message(AddClient.telegram_id)
+async def client_telegram_id(msg: types.Message, state: FSMContext):
+    if msg.text == BACK_TEXT:
+        await state.set_state(AddClient.business_name)
+        await msg.answer("نام کسب‌وکار:", reply_markup=back_reply_kb())
+        return
+    val = (msg.text or "").strip()
+    if val == "-":
+        tg_id = None
+    else:
+        if not val.isdigit():
+            await msg.answer("❌ لطفاً عدد معتبر یا - وارد کنید.")
+            return
+        tg_id = int(val)
+    await state.update_data(telegram_id=tg_id)
     await state.set_state(AddClient.industry)
     await msg.answer("صنعت (اختیاری – برای عبور، -):", reply_markup=back_reply_kb())
 
 @router.message(AddClient.industry)
 async def client_industry(msg: types.Message, state: FSMContext):
     if msg.text == BACK_TEXT:
-        await state.set_state(AddClient.business_name)
-        await msg.answer("نام کسب‌وکار:", reply_markup=back_reply_kb())
+        await state.set_state(AddClient.telegram_id)
+        await msg.answer("Telegram ID عددی مشتری؟ (اختیاری – برای عبور، -)", reply_markup=back_reply_kb())
         return
     industry = None if msg.text.strip() == '-' else msg.text.strip()
     await state.update_data(industry=industry)
@@ -333,9 +351,11 @@ async def client_status(msg: types.Message, state: FSMContext):
     data = await state.get_data()
     platforms_h = ", ".join(data.get("platforms", {}).get("list", [])) if data.get("platforms") else "-"
     contact_h = ", ".join([f"{k}={v}" for k, v in (data.get("contact_info") or {}).items()]) or "-"
+    tg_h = data.get("telegram_id") or "-"
     preview = (
         "لطفاً اطلاعات مشتری را بررسی کنید:\n\n"
         f"کسب‌وکار: {data['business_name']}\n"
+        f"Telegram ID: {tg_h}\n"
         f"صنعت: {data.get('industry') or '-'}\n"
         f"تاریخ قرارداد: {data.get('contract_date') or '-'}\n"
         f"پلتفرم‌ها: {platforms_h}\n"
@@ -362,6 +382,7 @@ async def add_client_confirm_or_cancel(cb: types.CallbackQuery, state: FSMContex
     async with AsyncSessionLocal() as session:
         client = await crud.create_client(
             session,
+            telegram_id=data.get("telegram_id"),
             business_name=data["business_name"],
             industry=data.get("industry"),
             contract_date=data.get("contract_date"),

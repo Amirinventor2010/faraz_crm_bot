@@ -1,5 +1,10 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton
+)
+from keyboards.common import BACK_TEXT  # متن دکمه بازگشت («⬅️ بازگشت»)
 
+# پنل اصلی نیروی مارکتینگ
 def staff_main_kb() -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="📝 ثبت فعالیت جدید", callback_data="staff_add_activity")],
@@ -9,6 +14,7 @@ def staff_main_kb() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+# لیست مشتری‌ها برای انتخاب در فرم ثبت فعالیت
 def clients_inline_kb(clients: list) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=c.business_name, callback_data=f"staff_pick_client:{c.id}")]
@@ -17,6 +23,15 @@ def clients_inline_kb(clients: list) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text="⬅️ بازگشت به پنل نیرو", callback_data="staff_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+# کیبورد بازگشت (Reply) برای مراحل فرم ثبت فعالیت
+def staff_back_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=BACK_TEXT)]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+# ——— در صورت نیاز برای جریان‌های ادمین (تخصیص مشتری) نگه‌داشتیم ———
 def assign_clients_inline_kb(clients: list) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=c.business_name, callback_data=f"assign_pick_client:{c.id}")]

@@ -1,181 +1,182 @@
+from __future__ import annotations
+
 from aiogram import Router, types, F
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
+from datetime import datetime
+from typing import Optional
 
+from keyboards.staff import staff_main_kb, staff_back_kb, clients_inline_kb
+from keyboards.common import confirm_inline_kb, BACK_TEXT
 from db.base import AsyncSessionLocal
 from db import crud
-from keyboards.staff import staff_main_kb, clients_inline_kb
-from keyboards.common import back_reply_kb, confirm_inline_kb, BACK_TEXT
-from utils.constants import ACTIVITY_TYPES
 
 router = Router()
 
-@router.callback_query(F.data == "staff_menu")
-async def staff_menu(cb: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await cb.message.answer("پنل نیروی مارکتینگ:", reply_markup=staff_main_kb())
+# ---------------------- ابزار کمکی ----------------------
+def _parse_dt_or_now(raw: Optional[str]) -> datetime:
+    """
+    اگر raw == "-" یا خالی → الان
+    اگر فرمت "YYYY-MM-DD HH:MM" یا "YYYY/MM/DD HH:MM" بود → همان زمان
+    در غیر این صورت → الان
+    """
+    if not raw or raw.strip() == "-":
+        return datetime.utcnow()
+    raw = raw.strip()
+    for fmt in ("%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            pass
+    return datetime.utcnow()
 
+# ---------------------- وضعیت‌ها ----------------------
 class AddActivity(StatesGroup):
-    choose_client = State()
-    activity_type = State()
-    platform = State()
-    ts = State()
-    goal = State()
-    evidence_link = State()
-    initial_result = State()
+    pick_client = State()
+    pick_type = State()
+    pick_platform = State()
+    pick_ts = State()
+    pick_goal = State()
+    pick_evidence = State()
+    pick_result = State()
     confirm = State()
 
+# ---------------------- ثبت فعالیت ----------------------
 @router.callback_query(F.data == "staff_add_activity")
 async def staff_add_activity_start(cb: types.CallbackQuery, state: FSMContext):
-    staff_tg = cb.from_user.id
+    user_tg = cb.from_user.id
     async with AsyncSessionLocal() as session:
-        staff = await crud.get_user_by_telegram_id(session, staff_tg)
-        clients = await crud.list_clients_for_staff(session, staff.id) if staff else []
-    if not clients:
-        await cb.message.answer("⚠️ هنوز مشتری‌ای به شما تخصیص داده نشده.")
+        me = await crud.get_user_by_telegram_id(session, user_tg)
+        clients = await crud.list_clients_for_staff(session, me.id) if me else []
+    if not me:
+        await cb.message.answer("⚠️ حساب نیروی مارکتینگ شما یافت نشد.")
         return
-    await state.set_state(AddActivity.choose_client)
-    await cb.message.answer("لطفاً مشتری را انتخاب کنید:", reply_markup=clients_inline_kb(clients))
+    if not clients:
+        await cb.message.answer("هیچ مشتریِ تخصیص‌یافته‌ای برای شما یافت نشد.", reply_markup=staff_main_kb())
+        return
 
-@router.callback_query(AddActivity.choose_client, F.data.startswith("staff_pick_client:"))
+    await state.set_state(AddActivity.pick_client)
+    await cb.message.answer("مشتری را انتخاب کنید:", reply_markup=clients_inline_kb(clients))
+
+@router.callback_query(AddActivity.pick_client, F.data.startswith("staff_pick_client:"))
 async def staff_pick_client(cb: types.CallbackQuery, state: FSMContext):
     client_id = int(cb.data.split(":")[1])
     await state.update_data(client_id=client_id)
-    await state.set_state(AddActivity.activity_type)
-    types_text = "، ".join(ACTIVITY_TYPES)
-    await cb.message.answer(
-        f"نوع فعالیت؟ (یکی از موارد: {types_text})",
-        reply_markup=back_reply_kb()
-    )
+    await state.set_state(AddActivity.pick_type)
+    await cb.message.answer("نوع فعالیت؟ (مثال: پست، استوری، کمپین، DM، ...)", reply_markup=staff_back_kb())
 
-@router.message(AddActivity.activity_type)
-async def staff_activity_type(msg: types.Message, state: FSMContext):
+@router.message(AddActivity.pick_type)
+async def staff_type(msg: types.Message, state: FSMContext):
     if msg.text == BACK_TEXT:
-        async with AsyncSessionLocal() as session:
-            me = await crud.get_user_by_telegram_id(session, msg.from_user.id)
-            clients = await crud.list_clients_for_staff(session, me.id) if me else []
-        await state.set_state(AddActivity.choose_client)
-        await msg.answer("لطفاً مشتری را انتخاب کنید:", reply_markup=clients_inline_kb(clients))
+        await state.clear()
+        await msg.answer("لغو شد.", reply_markup=staff_main_kb())
         return
-    raw = (msg.text or "").strip()
-    if raw not in ACTIVITY_TYPES:
-        await msg.answer("❌ نوع فعالیت معتبر نیست.")
+    t = (msg.text or "").strip()
+    if not t:
+        await msg.answer("❌ نوع فعالیت خالی است.")
         return
-    await state.update_data(activity_type=raw)
-    await state.set_state(AddActivity.platform)
-    await msg.answer("پلتفرم هدف؟ (مثلاً Instagram / Telegram / Website … یا -)", reply_markup=back_reply_kb())
+    await state.update_data(activity_type=t)
+    await state.set_state(AddActivity.pick_platform)
+    await msg.answer("پلتفرم هدف؟ (مثال: اینستاگرام، تلگرام، دیوار، ... یا -)", reply_markup=staff_back_kb())
 
-@router.message(AddActivity.platform)
+@router.message(AddActivity.pick_platform)
 async def staff_platform(msg: types.Message, state: FSMContext):
     if msg.text == BACK_TEXT:
-        await state.set_state(AddActivity.activity_type)
-        await msg.answer("نوع فعالیت؟", reply_markup=back_reply_kb())
+        await state.set_state(AddActivity.pick_type)
+        await msg.answer("نوع فعالیت؟", reply_markup=staff_back_kb())
         return
-    platform = None if msg.text.strip() == '-' else msg.text.strip()
+    platform = None if msg.text.strip() == "-" else msg.text.strip()
     await state.update_data(platform=platform)
-    await state.set_state(AddActivity.ts)
-    await msg.answer("تاریخ و ساعت فعالیت؟ (YYYY-MM-DD HH:MM یا - برای اکنون)", reply_markup=back_reply_kb())
+    await state.set_state(AddActivity.pick_ts)
+    await msg.answer("تاریخ/ساعت فعالیت؟ (مثال: 2025-08-18 18:00 یا - برای اکنون)", reply_markup=staff_back_kb())
 
-@router.message(AddActivity.ts)
+@router.message(AddActivity.pick_ts)
 async def staff_ts(msg: types.Message, state: FSMContext):
     if msg.text == BACK_TEXT:
-        await state.set_state(AddActivity.platform)
-        await msg.answer("پلتفرم هدف؟", reply_markup=back_reply_kb())
+        await state.set_state(AddActivity.pick_platform)
+        await msg.answer("پلتفرم هدف؟", reply_markup=staff_back_kb())
         return
-    ts = msg.text.strip()
-    ts_value = None if ts == '-' else ts
-    await state.update_data(ts=ts_value)
-    await state.set_state(AddActivity.goal)
-    await msg.answer("هدف فعالیت (اختیاری – برای عبور، -):", reply_markup=back_reply_kb())
+    ts_dt = _parse_dt_or_now(msg.text)
+    await state.update_data(ts=ts_dt)
+    await state.set_state(AddActivity.pick_goal)
+    await msg.answer("هدف فعالیت؟ (جمله کوتاه یا -)", reply_markup=staff_back_kb())
 
-@router.message(AddActivity.goal)
+@router.message(AddActivity.pick_goal)
 async def staff_goal(msg: types.Message, state: FSMContext):
     if msg.text == BACK_TEXT:
-        await state.set_state(AddActivity.ts)
-        await msg.answer("تاریخ و ساعت فعالیت؟ (YYYY-MM-DD HH:MM یا - برای اکنون)", reply_markup=back_reply_kb())
+        await state.set_state(AddActivity.pick_ts)
+        await msg.answer("تاریخ/ساعت فعالیت؟", reply_markup=staff_back_kb())
         return
-    goal = None if msg.text.strip() == '-' else msg.text.strip()
+    goal = None if msg.text.strip() == "-" else msg.text.strip()
     await state.update_data(goal=goal)
-    await state.set_state(AddActivity.evidence_link)
-    await msg.answer("لینک یا مدرک (اختیاری – برای عبور، -):", reply_markup=back_reply_kb())
+    await state.set_state(AddActivity.pick_evidence)
+    await msg.answer("لینک/مدرک؟ (URL یا -)", reply_markup=staff_back_kb())
 
-@router.message(AddActivity.evidence_link)
+@router.message(AddActivity.pick_evidence)
 async def staff_evidence(msg: types.Message, state: FSMContext):
     if msg.text == BACK_TEXT:
-        await state.set_state(AddActivity.goal)
-        await msg.answer("هدف فعالیت (اختیاری – برای عبور، -):", reply_markup=back_reply_kb())
+        await state.set_state(AddActivity.pick_goal)
+        await msg.answer("هدف فعالیت؟", reply_markup=staff_back_kb())
         return
-    link = None if msg.text.strip() == '-' else msg.text.strip()
-    await state.update_data(evidence_link=link)
-    await state.set_state(AddActivity.initial_result)
-    await msg.answer("نتیجه اولیه (عدد یا توضیح کوتاه – اختیاری، برای عبور -):", reply_markup=back_reply_kb())
+    evidence = None if msg.text.strip() == "-" else msg.text.strip()
+    await state.update_data(evidence_link=evidence)
+    await state.set_state(AddActivity.pick_result)
+    await msg.answer("نتیجه اولیه؟ (عدد یا توضیح کوتاه یا -)", reply_markup=staff_back_kb())
 
-@router.message(AddActivity.initial_result)
-async def staff_initial_result(msg: types.Message, state: FSMContext):
+@router.message(AddActivity.pick_result)
+async def staff_result(msg: types.Message, state: FSMContext):
     if msg.text == BACK_TEXT:
-        await state.set_state(AddActivity.evidence_link)
-        await msg.answer("لینک یا مدرک (اختیاری – برای عبور، -):", reply_markup=back_reply_kb())
+        await state.set_state(AddActivity.pick_evidence)
+        await msg.answer("لینک/مدرک؟", reply_markup=staff_back_kb())
         return
-    res = None if msg.text.strip() == '-' else msg.text.strip()
-    await state.update_data(initial_result=res)
+    result = None if msg.text.strip() == "-" else msg.text.strip()
+    await state.update_data(initial_result=result)
 
     data = await state.get_data()
-    platforms_h = data.get("platform") or "-"
-    ts_h = data.get("ts") or "اکنون"
-    goal_h = data.get("goal") or "-"
-    link_h = data.get("evidence_link") or "-"
-    res_h = data.get("initial_result") or "-"
+    ts_show = data.get("ts")
+    if isinstance(ts_show, datetime):
+        ts_show = ts_show.strftime("%Y-%m-%d %H:%M UTC")
 
     preview = (
         "📌 پیش‌نمایش فعالیت\n\n"
-        f"- مشتری ID: {data.get('client_id')}\n"
-        f"- نوع فعالیت: {data.get('activity_type')}\n"
-        f"- پلتفرم: {platforms_h}\n"
-        f"- تاریخ/ساعت: {ts_h}\n"
-        f"- هدف: {goal_h}\n"
-        f"- مدرک: {link_h}\n"
-        f"- نتیجه اولیه: {res_h}\n\n"
+        f"مشتری: #{data['client_id']}\n"
+        f"نوع: {data['activity_type']}\n"
+        f"پلتفرم: {data.get('platform') or '-'}\n"
+        f"زمان: {ts_show}\n"
+        f"هدف: {data.get('goal') or '-'}\n"
+        f"مدرک: {data.get('evidence_link') or '-'}\n"
+        f"نتیجه اولیه: {data.get('initial_result') or '-'}\n\n"
         "ثبت شود؟"
     )
     await state.set_state(AddActivity.confirm)
-    await msg.answer(preview)
-    await msg.answer("لطفاً یکی را انتخاب کنید:", reply_markup=confirm_inline_kb("act_confirm", "act_cancel"))
 
-@router.callback_query(AddActivity.confirm, F.data.in_({"act_confirm", "act_cancel"}))
-async def staff_act_confirm(cb: types.CallbackQuery, state: FSMContext):
+    # 1) جمع کردن کیبورد Reply با پیام غیرخالی
+    await msg.answer("لطفاً پیش‌نمایش را بررسی کنید.", reply_markup=types.ReplyKeyboardRemove())
+    # 2) ارسال پیش‌نمایش همراه با کیبورد اینلاین تأیید/لغو
+    await msg.answer(preview, reply_markup=confirm_inline_kb("act_ok", "act_cancel"))
+
+@router.callback_query(AddActivity.confirm, F.data.in_({"act_ok", "act_cancel"}))
+async def staff_confirm(cb: types.CallbackQuery, state: FSMContext):
     if cb.data == "act_cancel":
         await state.clear()
         await cb.message.answer("لغو شد.", reply_markup=staff_main_kb())
         return
 
+    user_tg = cb.from_user.id
     data = await state.get_data()
-    staff_tg = cb.from_user.id
-
     async with AsyncSessionLocal() as session:
-        staff = await crud.get_user_by_telegram_id(session, staff_tg)
-        if not staff:
-            await state.clear()
-            await cb.message.answer("⚠️ شما به‌عنوان نیرو ثبت نشده‌اید.", reply_markup=staff_main_kb())
-            return
-
-        payload = {
-            "client_id": data.get("client_id"),
-            "staff_id": staff.id,
-            "activity_type": data.get("activity_type"),
-            "platform": data.get("platform"),
-            "goal": data.get("goal"),
-            "evidence_link": data.get("evidence_link"),
-            "initial_result": data.get("initial_result"),
-        }
-        if data.get("ts") not in (None, "-"):
-            payload["ts"] = data.get("ts")
-
-        if not payload["client_id"] or not payload["activity_type"]:
-            await state.clear()
-            await cb.message.answer("❌ داده‌های ضروری ناقص است.", reply_markup=staff_main_kb())
-            return
-
-        await crud.create_activity(session, **payload)
+        me = await crud.get_user_by_telegram_id(session, user_tg)
+        await crud.create_activity(
+            session,
+            client_id=data["client_id"],
+            staff_id=me.id,
+            activity_type=data["activity_type"],
+            platform=data.get("platform"),
+            ts=data.get("ts"),  # datetime
+            goal=data.get("goal"),
+            evidence_link=data.get("evidence_link"),
+            initial_result=data.get("initial_result"),
+        )
 
     await state.clear()
     await cb.message.answer("✅ فعالیت ثبت شد.", reply_markup=staff_main_kb())
