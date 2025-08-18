@@ -4,7 +4,9 @@ from aiogram.types import (
 )
 from keyboards.common import BACK_TEXT  # متن دکمه بازگشت («⬅️ بازگشت»)
 
+# -------------------------------
 # پنل اصلی نیروی مارکتینگ
+# -------------------------------
 def staff_main_kb() -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="📝 ثبت فعالیت جدید", callback_data="staff_add_activity")],
@@ -14,7 +16,9 @@ def staff_main_kb() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-# لیست مشتری‌ها برای انتخاب در فرم ثبت فعالیت
+# ------------------------------------------
+# لیست مشتری‌ها برای انتخاب در فرم فعالیت
+# ------------------------------------------
 def clients_inline_kb(clients: list) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=c.business_name, callback_data=f"staff_pick_client:{c.id}")]
@@ -23,7 +27,27 @@ def clients_inline_kb(clients: list) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text="⬅️ بازگشت به پنل نیرو", callback_data="staff_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-# کیبورد بازگشت (Reply) برای مراحل فرم ثبت فعالیت
+# ---------------------------------------------------------
+# انتخاب نوع فعالیت (برای فرم ثبت فعالیت روزانه نیرو)
+#  - با handler: data = "act_type:<value>"
+#  - یک گزینه «سایر (تایپی)» هم دارد
+# ---------------------------------------------------------
+def activity_types_inline_kb(types_list: list[str]) -> InlineKeyboardMarkup:
+    # هر آیتمِ لیست به شکل یک دکمهٔ جدا
+    rows = [
+        [InlineKeyboardButton(text=t, callback_data=f"act_type:{t}")]
+        for t in types_list[:20]
+    ]
+    # سایر (ورودی تایپی)
+    rows.append([InlineKeyboardButton(text="✏️ سایر (تایپی)", callback_data="act_type:other")])
+    # بازگشت
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="staff_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+# ---------------------------------------------------------
+# کیبورد بازگشت (Reply) برای مراحل فرم‌ها
+# (اگر جایی back_reply_kb از keyboards.common را استفاده نکردی)
+# ---------------------------------------------------------
 def staff_back_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BACK_TEXT)]],

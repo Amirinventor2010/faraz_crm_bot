@@ -1,9 +1,18 @@
-# keyboards/customer.py
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-def customer_main_kb():
-    kb = InlineKeyboardBuilder()
-    kb.button(text="ثبت بازخورد", callback_data="cust_feedback")
-    kb.button(text="گزارش خلاصه", callback_data="cust_summary")
-    kb.adjust(1)
-    return kb.as_markup()
+def customer_main_kb() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="🗳 ثبت بازخورد", callback_data="customer_add_feedback")],
+        [InlineKeyboardButton(text="📋 گزارش خلاصه من", callback_data="customer_summary")],
+        [InlineKeyboardButton(text="⬅️ بازگشت به منوی ورود", callback_data="back_to_entry")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def feedback_score_kb() -> InlineKeyboardMarkup:
+    # امتیاز 1 تا 5
+    row = [
+        InlineKeyboardButton(text=str(i), callback_data=f"fb_score:{i}")
+        for i in range(1, 6)
+    ]
+    rows = [row, [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="customer_menu")]]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
