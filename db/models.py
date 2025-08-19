@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from sqlalchemy import String, ForeignKey, DateTime, JSON, Text, Integer
+from sqlalchemy import String, ForeignKey, DateTime, JSON, Text, Integer, Float
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -22,6 +22,7 @@ class User(Base):
     status: Mapped[str] = mapped_column(String(16), default=STATUS_ACTIVE)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    # با __future__.annotations می‌تونیم به Client همین‌جا ارجاع بدیم
     clients: Mapped[list[Client]] = relationship(back_populates="assigned_staff")
 
 
@@ -29,13 +30,6 @@ class Client(Base):
     __tablename__ = "clients"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-
-    # ✅ تلگرام آی‌دی مشتری برای ورود به پنل مشتری
-    #   - unique=True: هر مشتری یک آی‌دی منحصربه‌فرد داشته باشد
-    #   - index=True: لاگین سریع‌تر
-    #   - nullable=True: اگر آی‌دی هنوز مشخص نیست، ثبت مشتری ممکن است
-    telegram_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True, nullable=True)
-
     business_name: Mapped[str] = mapped_column(String(200))
     industry: Mapped[str | None]
     contract_date: Mapped[str | None]
@@ -47,9 +41,24 @@ class Client(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default=STATUS_ACTIVE)
     assigned_staff_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    telegram_id: Mapped[int | None] = mapped_column(Integer, index=True)  # برای ورود مشتری
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    # ✅ اینجا مشکل بود — نباید داخل کوتیشن با | بیاد
     assigned_staff: Mapped[User | None] = relationship(back_populates="clients")
+
+
+class ClientKPI(Base):
+    """
+    KPI هفتگی برای مشتری (بر اساس تعداد فعالیت هفتگی)
+    """
+    __tablename__ = "client_kpis"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
+    target_per_week: Mapped[int] = mapped_column(Integer, default=5)
+    warn_ratio: Mapped[float] = mapped_column(Float, default=0.6)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class Activity(Base):

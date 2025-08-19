@@ -1,16 +1,24 @@
 from __future__ import annotations
 
-from sqlalchemy import select, update, func
+from datetime import datetime
+from sqlalchemy import select, update, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
-from .models import User, Client, Activity, Feedback, AuditLog
+from .models import User, Client, ClientKPI, Activity, Feedback, AuditLog
 from utils.constants import ROLE_STAFF, STATUS_ACTIVE
-from config import ADMIN_TELEGRAM_IDS  # برای تشخیص ادمین‌ها از کانفیگ
+from config import ADMIN_TELEGRAM_IDS
+
 
 # -------- Admin helpers --------
+def _is_admin_tg(tg_id: int) -> bool:
+    ids = ADMIN_TELEGRAM_IDS
+    if isinstance(ids, (list, tuple, set)):
+        norm = {str(x).strip() for x in ids if str(x).strip()}
+    else:
+        norm = {s.strip() for s in str(ids).split(",") if s.strip()}
+    return str(tg_id) in norm
+
 async def is_admin_tgid(session: AsyncSession, tg_id: int) -> bool:
-    # ایدی‌های ادمین در .env -> ADMIN_TELEGRAM_IDS
-    # اگر در جدول users هم ادمین تعریف شده باشد، آن‌هم قابل قبول است.
-    if str(tg_id) in [s.strip() for s in ADMIN_TELEGRAM_IDS.split(",") if s.strip()]:
+    if _is_admin_tg(tg_id):
         return True
     res = await session.execute(select(User).where(User.telegram_id == tg_id))
     u = res.scalar_one_or_none()
@@ -54,6 +62,14 @@ async def get_client_by_telegram_id(session: AsyncSession, tg_id: int) -> Client
     res = await session.execute(select(Client).where(Client.telegram_id == tg_id))
     return res.scalar_one_or_none()
 
+async def list_all_clients(session: AsyncSession) -> list[Client]:
+    res = await session.execute(select(Client))
+    return list(res.scalars())
+
+async def list_clients_for_staff(session: AsyncSession, staff_id: int) -> list[Client]:
+    res = await session.execute(select(Client).where(Client.assigned_staff_id == staff_id))
+    return list(res.scalars())
+
 async def assign_client_to_staff(session: AsyncSession, client_id: int, staff_id: int):
     await session.execute(update(Client).where(Client.id == client_id).values(assigned_staff_id=staff_id))
     await session.commit()
@@ -64,26 +80,25 @@ async def count_clients_for_staff(session: AsyncSession, staff_id: int) -> int:
     )
     return int(res.scalar() or 0)
 
-async def list_clients_for_staff(session: AsyncSession, staff_id: int) -> list[Client]:
-    res = await session.execute(select(Client).where(Client.assigned_staff_id == staff_id))
-    return list(res.scalars())
+# -------- KPI --------
+async def upsert_client_kpi(session: AsyncSession, client_id: int, target_per_week: int, warn_ratio: float = 0.6) -> ClientKPI:
+    res = await session.execute(select(ClientKPI).where(ClientKPI.client_id == client_id))
+    row = res.scalar_one_or_none()
+    if row:
+        row.target_per_week = target_per_week
+        row.warn_ratio = warn_ratio
+        await session.commit()
+        await session.refresh(row)
+        return row
+    k = ClientKPI(client_id=client_id, target_per_week=target_per_week, warn_ratio=warn_ratio)
+    session.add(k)
+    await session.commit()
+    await session.refresh(k)
+    return k
 
-async def pick_staff_by_capacity(session: AsyncSession) -> User | None:
-    staff_list = await list_staff_active(session)
-    if not staff_list:
-        return None
-    best, best_load = None, None
-    for s in staff_list:
-        load = await count_clients_for_staff(session, s.id)
-        cap = s.max_capacity or 0
-        if cap <= load:
-            continue
-        if best is None:
-            best, best_load = s, load
-        else:
-            if load < best_load or (load == best_load and (s.max_capacity or 0) > (best.max_capacity or 0)):
-                best, best_load = s, load
-    return best
+async def get_client_kpi(session: AsyncSession, client_id: int) -> ClientKPI | None:
+    res = await session.execute(select(ClientKPI).where(ClientKPI.client_id == client_id))
+    return res.scalar_one_or_none()
 
 # -------- Activity --------
 async def create_activity(session: AsyncSession, **data) -> Activity:
@@ -98,6 +113,22 @@ async def count_activities_for_client(session: AsyncSession, client_id: int) -> 
         select(func.count()).select_from(Activity).where(Activity.client_id == client_id)
     )
     return int(res.scalar() or 0)
+
+async def count_activities_in_range(session: AsyncSession, client_id: int, start_dt: datetime, end_dt: datetime) -> int:
+    res = await session.execute(
+        select(func.count()).select_from(Activity).where(
+            Activity.client_id == client_id,
+            Activity.ts >= start_dt,
+            Activity.ts < end_dt
+        )
+    )
+    return int(res.scalar() or 0)
+
+async def last_activity_ts(session: AsyncSession, client_id: int) -> datetime | None:
+    res = await session.execute(
+        select(Activity.ts).where(Activity.client_id == client_id).order_by(desc(Activity.ts)).limit(1)
+    )
+    return res.scalar_one_or_none()
 
 # -------- Feedback --------
 async def create_feedback(session: AsyncSession, **data) -> Feedback:
