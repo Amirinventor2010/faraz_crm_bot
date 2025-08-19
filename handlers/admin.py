@@ -1,31 +1,57 @@
+from __future__ import annotations
+
+import io
+import csv
+from datetime import datetime, timedelta
+
 from aiogram import Router, types, F
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 
 from db.base import AsyncSessionLocal
 from db import crud
-from utils.constants import ROLE_STAFF, ROLE_ADMIN, STATUS_ACTIVE
-from keyboards.admin import admin_main_kb, admin_setup_kb
+from utils.constants import (
+    ROLE_STAFF, ROLE_ADMIN,
+    STATUS_ACTIVE,
+    KPI_YELLOW_RATIO, KPI_RED_RATIO,
+    INACTIVITY_WARN_DAYS, FEEDBACK_WARN_SCORE,
+)
+from keyboards.admin import (
+    admin_main_kb, admin_setup_kb,
+    admin_reports_kb, admin_export_kb,
+    admin_kpi_kb, clients_inline_kb_for_kpi
+)
 from keyboards.common import back_reply_kb, confirm_inline_kb, BACK_TEXT
 
 router = Router()
 
-# ----- ناوبری پنل مدیر -----
-@router.callback_query(F.data == "admin_menu")
-async def admin_menu(cb: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await cb.message.edit_text("پنل مدیر:", reply_markup=admin_main_kb())
-
-# ----- راه‌اندازی اولیه -----
-@router.callback_query(F.data == "admin_setup")
-async def admin_setup_menu(cb: types.CallbackQuery, state: FSMContext):
-    await cb.message.edit_text("راه‌اندازی اولیه – یکی از گزینه‌ها را انتخاب کنید:", reply_markup=admin_setup_kb())
-
+# -------------------------
+# ناوبری پنل مدیر
+# -------------------------
 @router.callback_query(F.data == "admin_back_main")
 async def admin_back_main(cb: types.CallbackQuery, state: FSMContext):
-    await cb.message.edit_text("پنل مدیر:", reply_markup=admin_main_kb())
+    await state.clear()
+    await cb.message.answer("پنل مدیر:", reply_markup=admin_main_kb())
 
-# ===== ثبت نیرو (با پیش‌نمایش/تأیید) =====
+@router.callback_query(F.data == "admin_setup")
+async def admin_setup_menu(cb: types.CallbackQuery, state: FSMContext):
+    await cb.message.answer("راه‌اندازی اولیه – یکی از گزینه‌ها:", reply_markup=admin_setup_kb())
+
+@router.callback_query(F.data == "admin_reports_menu")
+async def admin_reports_menu(cb: types.CallbackQuery, state: FSMContext):
+    await cb.message.answer("📊 گزارش‌ها:", reply_markup=admin_reports_kb())
+
+@router.callback_query(F.data == "admin_export_menu")
+async def admin_export_menu(cb: types.CallbackQuery, state: FSMContext):
+    await cb.message.answer("📤 خروجی و دانلود:", reply_markup=admin_export_kb())
+
+@router.callback_query(F.data == "admin_kpi_menu")
+async def admin_kpi_menu(cb: types.CallbackQuery, state: FSMContext):
+    await cb.message.answer("🎯 KPI / SLA:", reply_markup=admin_kpi_kb())
+
+# -----------------------------
+# ثبت نیروی مارکتینگ (با پیش‌نمایش)
+# -----------------------------
 class AddStaff(StatesGroup):
     waiting_role = State()
     waiting_name = State()
@@ -40,14 +66,13 @@ class AddStaff(StatesGroup):
 @router.callback_query(F.data == "admin_add_staff")
 async def add_staff_start(cb: types.CallbackQuery, state: FSMContext):
     await state.set_state(AddStaff.waiting_role)
-    # از اینجا به بعد ورودی متنی می‌گیریم؛ پیام جدید ارسال می‌شود
     await cb.message.answer("نقش کاربر را مشخص کنید (مدیر/نیرو):", reply_markup=back_reply_kb())
 
 @router.message(AddStaff.waiting_role)
 async def add_staff_role(msg: types.Message, state: FSMContext):
     if msg.text == BACK_TEXT:
         await state.clear()
-        await msg.answer("راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
+        await msg.answer("بازگشت به راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
         return
     raw = (msg.text or "").strip()
     if raw not in ("مدیر", "نیرو"):
@@ -69,7 +94,7 @@ async def add_staff_name(msg: types.Message, state: FSMContext):
         return
     await state.update_data(name=msg.text.strip())
     await state.set_state(AddStaff.waiting_tg_id)
-    await msg.answer("Telegram ID کاربر (فقط عدد):", reply_markup=back_reply_kb())
+    await msg.answer("Telegram ID کاربر را وارد کنید (فقط عدد):", reply_markup=back_reply_kb())
 
 @router.message(AddStaff.waiting_tg_id)
 async def add_staff_tg(msg: types.Message, state: FSMContext):
@@ -88,7 +113,7 @@ async def add_staff_tg(msg: types.Message, state: FSMContext):
 async def add_staff_phone(msg: types.Message, state: FSMContext):
     if msg.text == BACK_TEXT:
         await state.set_state(AddStaff.waiting_tg_id)
-        await msg.answer("Telegram ID کاربر (فقط عدد):", reply_markup=back_reply_kb())
+        await msg.answer("Telegram ID کاربر را وارد کنید (فقط عدد):", reply_markup=back_reply_kb())
         return
     phone = None if msg.text.strip() == '-' else msg.text.strip()
     await state.update_data(phone=phone)
@@ -163,13 +188,15 @@ async def add_staff_status(msg: types.Message, state: FSMContext):
         "آیا تأیید می‌کنید؟"
     )
     await state.set_state(AddStaff.waiting_confirm)
-    await msg.answer(preview, reply_markup=confirm_inline_kb("staff_confirm", "staff_cancel"))
+    await msg.answer(preview)
+    await msg.answer(" ", reply_markup=confirm_inline_kb("staff_confirm", "staff_cancel"))
 
 @router.callback_query(AddStaff.waiting_confirm, F.data.in_({"staff_confirm", "staff_cancel"}))
 async def add_staff_confirm_or_cancel(cb: types.CallbackQuery, state: FSMContext):
     if cb.data == "staff_cancel":
         await state.clear()
-        await cb.message.edit_text("راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
+        await cb.message.answer("لغو شد. بازگشت به راه‌اندازی اولیه.")
+        await cb.message.answer(" ", reply_markup=admin_setup_kb())
         return
 
     data = await state.get_data()
@@ -188,9 +215,12 @@ async def add_staff_confirm_or_cancel(cb: types.CallbackQuery, state: FSMContext
         await crud.log_action(session, action="CREATE", entity="User", entity_id=user.id, diff_json=data)
 
     await state.clear()
-    await cb.message.edit_text("✅ نیروی جدید ثبت شد.\nراه‌اندازی اولیه:", reply_markup=admin_setup_kb())
+    await cb.message.answer("✅ نیروی جدید با موفقیت ثبت شد.")
+    await cb.message.answer("بازگشت به راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
 
-# ===== ثبت مشتری مثل قبل (منوها با edit_text برمی‌گردند) =====
+# -----------------------------
+# ثبت مشتری (با پیش‌نمایش)
+# -----------------------------
 class AddClient(StatesGroup):
     business_name = State()
     industry = State()
@@ -202,6 +232,7 @@ class AddClient(StatesGroup):
     contact_info = State()
     notes = State()
     status = State()
+    telegram_id = State()
     waiting_confirm = State()
 
 @router.callback_query(F.data == "admin_add_client")
@@ -213,7 +244,7 @@ async def add_client_start(cb: types.CallbackQuery, state: FSMContext):
 async def client_business_name(msg: types.Message, state: FSMContext):
     if msg.text == BACK_TEXT:
         await state.clear()
-        await msg.answer("راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
+        await msg.answer("بازگشت به راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
         return
     name = (msg.text or "").strip()
     if not name:
@@ -330,13 +361,26 @@ async def client_status(msg: types.Message, state: FSMContext):
     if status not in ("ACTIVE", "INACTIVE"):
         await msg.answer("❌ مقدار معتبر: ACTIVE یا INACTIVE")
         return
-    data = await state.get_data()
-    data["status"] = status
+    await state.update_data(status=status)
+    await state.set_state(AddClient.telegram_id)
+    await msg.answer("Telegram ID مشتری؟ (فقط عدد – برای ورود پنل مشتری الزامی)", reply_markup=back_reply_kb())
 
+@router.message(AddClient.telegram_id)
+async def client_telegram_id(msg: types.Message, state: FSMContext):
+    if msg.text == BACK_TEXT:
+        await state.set_state(AddClient.status)
+        await msg.answer("وضعیت مشتری (ACTIVE/INACTIVE):", reply_markup=back_reply_kb())
+        return
+    if not msg.text.isdigit():
+        await msg.answer("❌ لطفاً عدد معتبر وارد کنید.")
+        return
+    await state.update_data(telegram_id=int(msg.text))
+
+    data = await state.get_data()
     platforms_h = ", ".join(data.get("platforms", {}).get("list", [])) if data.get("platforms") else "-"
     contact_h = ", ".join([f"{k}={v}" for k, v in (data.get("contact_info") or {}).items()]) or "-"
     preview = (
-        "لطفاً اطلاعات مشتری را بررسی کنید:\n\n"
+        "📌 پیش‌نمایش مشتری\n\n"
         f"کسب‌وکار: {data['business_name']}\n"
         f"صنعت: {data.get('industry') or '-'}\n"
         f"تاریخ قرارداد: {data.get('contract_date') or '-'}\n"
@@ -346,17 +390,20 @@ async def client_status(msg: types.Message, state: FSMContext):
         f"کانال بازخورد: {data.get('feedback_channel') or '-'}\n"
         f"اطلاعات تماس: {contact_h}\n"
         f"یادداشت: {data.get('notes') or '-'}\n"
-        f"وضعیت: {status}\n\n"
+        f"وضعیت: {data['status']}\n"
+        f"Telegram ID مشتری: {data['telegram_id']}\n\n"
         "آیا تأیید می‌کنید؟"
     )
     await state.set_state(AddClient.waiting_confirm)
-    await msg.answer(preview, reply_markup=confirm_inline_kb("client_confirm", "client_cancel"))
+    await msg.answer(preview)
+    await msg.answer(" ", reply_markup=confirm_inline_kb("client_confirm", "client_cancel"))
 
 @router.callback_query(AddClient.waiting_confirm, F.data.in_({"client_confirm", "client_cancel"}))
 async def add_client_confirm_or_cancel(cb: types.CallbackQuery, state: FSMContext):
     if cb.data == "client_cancel":
         await state.clear()
-        await cb.message.edit_text("راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
+        await cb.message.answer("لغو شد. بازگشت به راه‌اندازی اولیه.")
+        await cb.message.answer(" ", reply_markup=admin_setup_kb())
         return
 
     data = await state.get_data()
@@ -373,8 +420,232 @@ async def add_client_confirm_or_cancel(cb: types.CallbackQuery, state: FSMContex
             contact_info=data.get("contact_info"),
             notes=data.get("notes"),
             status=data["status"],
+            telegram_id=data["telegram_id"],
         )
         await crud.log_action(session, action="CREATE", entity="Client", entity_id=client.id, diff_json=data)
 
     await state.clear()
-    await cb.message.edit_text("✅ مشتری جدید ثبت شد.\nراه‌اندازی اولیه:", reply_markup=admin_setup_kb())
+    await cb.message.answer("✅ مشتری جدید ثبت شد.")
+    await cb.message.answer("بازگشت به راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
+
+# -----------------------------
+# تخصیص مشتری به نیرو (دستی/خودکار)
+# -----------------------------
+class AssignClient(StatesGroup):
+    client_id = State()
+    staff_id_or_auto = State()
+
+@router.callback_query(F.data == "admin_assign")
+async def assign_start(cb: types.CallbackQuery, state: FSMContext):
+    await state.set_state(AssignClient.client_id)
+    await cb.message.answer("شناسه مشتری را وارد کنید:", reply_markup=back_reply_kb())
+
+@router.message(AssignClient.client_id)
+async def assign_client_id(msg: types.Message, state: FSMContext):
+    if msg.text == BACK_TEXT:
+        await state.clear()
+        await msg.answer("بازگشت به راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
+        return
+    if not msg.text.isdigit():
+        await msg.answer("❌ شناسه مشتری باید عدد باشد.")
+        return
+    await state.update_data(client_id=int(msg.text))
+    await state.set_state(AssignClient.staff_id_or_auto)
+    await msg.answer("شناسه نیرو را وارد کنید یا بنویسید: auto", reply_markup=back_reply_kb())
+
+@router.message(AssignClient.staff_id_or_auto)
+async def assign_decide(msg: types.Message, state: FSMContext):
+    if msg.text == BACK_TEXT:
+        await state.set_state(AssignClient.client_id)
+        await msg.answer("شناسه مشتری را وارد کنید:", reply_markup=back_reply_kb())
+        return
+    data = await state.get_data()
+    client_id = data["client_id"]
+    async with AsyncSessionLocal() as session:
+        if msg.text.strip().lower() == 'auto':
+            staff = await crud.pick_staff_by_capacity(session)
+            if not staff:
+                await state.clear()
+                await msg.answer("❌ نیروی فعال با ظرفیت آزاد پیدا نشد.")
+                await msg.answer("بازگشت به راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
+                return
+            await crud.assign_client_to_staff(session, client_id=client_id, staff_id=staff.id)
+            await crud.log_action(session, action="ASSIGN", entity="Client", entity_id=client_id, diff_json={"staff_id": staff.id, "mode": "auto"})
+            await state.clear()
+            await msg.answer(f"✅ مشتری {client_id} به‌صورت خودکار به نیروی {staff.name} (ID={staff.id}) تخصیص یافت.")
+            await msg.answer("بازگشت به راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
+            return
+
+        if not msg.text.isdigit():
+            await msg.answer("❌ شناسه نیرو باید عدد باشد یا بنویسید auto.")
+            return
+        staff_id = int(msg.text)
+        staff = await crud.get_user_by_id(session, staff_id)
+        if not staff:
+            await msg.answer("❌ نیروی موردنظر یافت نشد.")
+            return
+        await crud.assign_client_to_staff(session, client_id=client_id, staff_id=staff_id)
+        await crud.log_action(session, action="ASSIGN", entity="Client", entity_id=client_id, diff_json={"staff_id": staff_id, "mode": "manual"})
+    await state.clear()
+    await msg.answer(f"✅ مشتری {client_id} به نیروی {staff_id} تخصیص داده شد.")
+    await msg.answer("بازگشت به راه‌اندازی اولیه:", reply_markup=admin_setup_kb())
+
+# -----------------------------
+# 🎯 KPI / SLA — تنظیم هدف هفتگی
+# -----------------------------
+class KPISet(StatesGroup):
+    pick_client = State()
+    set_target = State()
+    confirm = State()
+
+@router.callback_query(F.data == "admin_kpi_set_client")
+async def kpi_pick_client_menu(cb: types.CallbackQuery, state: FSMContext):
+    async with AsyncSessionLocal() as session:
+        clients = await crud.list_all_clients(session)
+    if not clients:
+        await cb.message.answer("هیچ مشتری‌ای ثبت نشده است.")
+        return
+    await state.set_state(KPISet.pick_client)
+    await cb.message.answer("مشتری را برای تنظیم KPI انتخاب کنید:", reply_markup=clients_inline_kb_for_kpi(clients))
+
+@router.callback_query(KPISet.pick_client, F.data.startswith("kpi_pick_client:"))
+async def kpi_pick_client(cb: types.CallbackQuery, state: FSMContext):
+    client_id = int(cb.data.split(":")[1])
+    await state.update_data(client_id=client_id)
+    await state.set_state(KPISet.set_target)
+    await cb.message.answer("هدف هفتگی تعداد فعالیت را وارد کنید (عدد ≥ 0):", reply_markup=back_reply_kb())
+
+@router.message(KPISet.set_target)
+async def kpi_set_target(msg: types.Message, state: FSMContext):
+    if msg.text == BACK_TEXT:
+        await state.clear()
+        await msg.answer("بازگشت به KPI / SLA:", reply_markup=admin_kpi_kb())
+        return
+    try:
+        target = int(msg.text)
+        if target < 0:
+            raise ValueError()
+    except:
+        await msg.answer("❌ لطفاً یک عدد معتبر (≥0) وارد کنید.")
+        return
+    data = await state.get_data()
+    await state.update_data(target=target)
+    preview = f"🎯 KPI هفتگی مشتری {data['client_id']} → هدف تعداد فعالیت: {target}\nآیا تأیید می‌کنید؟"
+    await state.set_state(KPISet.confirm)
+    await msg.answer(preview)
+    await msg.answer(" ", reply_markup=confirm_inline_kb("kpi_confirm", "kpi_cancel"))
+
+@router.callback_query(KPISet.confirm, F.data.in_({"kpi_confirm", "kpi_cancel"}))
+async def kpi_confirm(cb: types.CallbackQuery, state: FSMContext):
+    if cb.data == "kpi_cancel":
+        await state.clear()
+        await cb.message.answer("لغو شد.", reply_markup=admin_kpi_kb())
+        return
+    data = await state.get_data()
+    async with AsyncSessionLocal() as session:
+        k = await crud.upsert_client_kpi(session, data["client_id"], data["target"])
+        await crud.log_action(session, action="UPSERT", entity="ClientKPI", entity_id=k.id, diff_json=data)
+    await state.clear()
+    await cb.message.answer("✅ KPI هفتگی ذخیره شد.", reply_markup=admin_kpi_kb())
+
+# -----------------------------
+# 📊 گزارش هفتگی مدیر
+# -----------------------------
+@router.callback_query(F.data == "admin_reports_weekly")
+async def admin_report_weekly(cb: types.CallbackQuery, state: FSMContext):
+    end_dt = datetime.utcnow()
+    start_dt = end_dt - timedelta(days=7)
+
+    async with AsyncSessionLocal() as session:
+        clients = await crud.list_all_clients(session)
+
+        if not clients:
+            await cb.message.answer("هیچ مشتری‌ای ثبت نشده است.")
+            return
+
+        lines = ["📊 گزارش هفتگی مشتریان\n"]
+        warn_lines = []
+
+        for c in clients:
+            kpi = await crud.get_client_kpi(session, c.id)
+            target = (kpi.target_per_week if kpi else 0)
+
+            acts = await crud.count_activities_in_range(session, c.id, start_dt, end_dt)
+            fb_avg = await crud.avg_feedback_for_client(session, c.id)
+            last_ts = await crud.last_activity_ts(session, c.id)
+
+            # وضعیت رنگ
+            status_emoji = "⚪️"
+            if target > 0:
+                ratio = acts / max(target, 1)
+                if ratio >= 1.0:
+                    status_emoji = "🟢"
+                elif ratio >= KPI_YELLOW_RATIO:
+                    status_emoji = "🟡"
+                else:
+                    status_emoji = "🔴"
+
+            fb_h = f"{fb_avg:.2f}" if fb_avg is not None else "-"
+            last_h = last_ts.strftime("%Y-%m-%d") if last_ts else "-"
+
+            lines.append(
+                f"\n1️⃣ مشتری: {c.business_name}\n"
+                f"- وضعیت: {status_emoji}\n"
+                f"- KPI فعلی: {acts} / {target}\n"
+                f"- فعالیت‌ها (7روز): {acts}\n"
+                f"- بازخورد: {fb_h}\n"
+                f"- آخرین فعالیت: {last_h}"
+            )
+
+            # هشدارها
+            # 1) فروش نداریم فعلاً؛ 2) رضایت پایین؛ 3) عدم فعالیت
+            if fb_avg is not None and fb_avg < FEEDBACK_WARN_SCORE:
+                warn_lines.append(f"• رضایت پایین‌تر از آستانه ({c.business_name}): {fb_h}")
+            if last_ts is None or (end_dt - last_ts).days > INACTIVITY_WARN_DAYS:
+                days = (end_dt - last_ts).days if last_ts else "∞"
+                warn_lines.append(f"• عدم فعالیت نیرو > {INACTIVITY_WARN_DAYS} روز ({c.business_name}): {days} روز")
+
+        if warn_lines:
+            lines.append("\n⚠️ هشدارها:")
+            lines.extend([f"- {w}" for w in warn_lines])
+
+        await cb.message.answer("\n".join(lines), reply_markup=admin_reports_kb())
+
+# -----------------------------
+# 📤 خروجی هفتگی CSV
+# -----------------------------
+@router.callback_query(F.data == "admin_export_week_csv")
+async def admin_export_week_csv(cb: types.CallbackQuery, state: FSMContext):
+    end_dt = datetime.utcnow()
+    start_dt = end_dt - timedelta(days=7)
+
+    async with AsyncSessionLocal() as session:
+        clients = await crud.list_all_clients(session)
+
+        # فایل CSV: per client summary
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["client_id", "business_name", "kpi_target", "acts_7d", "avg_feedback", "last_activity_utc"])
+
+        for c in clients:
+            kpi = await crud.get_client_kpi(session, c.id)
+            target = (kpi.target_per_week if kpi else 0)
+            acts = await crud.count_activities_in_range(session, c.id, start_dt, end_dt)
+            fb_avg = await crud.avg_feedback_for_client(session, c.id)
+            last_ts = await crud.last_activity_ts(session, c.id)
+            writer.writerow([
+                c.id,
+                c.business_name,
+                target,
+                acts,
+                f"{fb_avg:.2f}" if fb_avg is not None else "",
+                last_ts.isoformat() if last_ts else ""
+            ])
+
+    # ارسال فایل
+    data = buf.getvalue().encode("utf-8-sig")
+    await cb.message.answer_document(
+        types.BufferedInputFile(data, filename="weekly_summary.csv"),
+        caption="📤 خروجی هفتگی (7 روز اخیر) — فعالیت/بازخورد/KPI"
+    )
+    await cb.message.answer("گزینه‌های دیگر:", reply_markup=admin_export_kb())
