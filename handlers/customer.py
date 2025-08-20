@@ -9,6 +9,7 @@ from db.base import AsyncSessionLocal
 from db import crud
 from keyboards.customer import customer_main_kb, feedback_score_kb
 from keyboards.common import back_reply_kb, confirm_inline_kb, BACK_TEXT
+from utils.ui import edit_or_send
 
 router = Router()
 
@@ -16,7 +17,7 @@ router = Router()
 @router.callback_query(F.data == "customer_menu")
 async def customer_menu(cb: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await cb.message.answer("پنل مشتری:", reply_markup=customer_main_kb())
+    await edit_or_send(cb, "پنل مشتری:", customer_main_kb())
 
 # ---------- فرم ثبت بازخورد ----------
 class AddFeedback(StatesGroup):
@@ -73,13 +74,13 @@ async def customer_feedback_comment(msg: types.Message, state: FSMContext):
 async def customer_feedback_confirm(cb: types.CallbackQuery, state: FSMContext):
     if cb.data == "fb_cancel":
         await state.clear()
-        await cb.message.answer("لغو شد.", reply_markup=customer_main_kb())
+        await edit_or_send(cb, "لغو شد.", customer_main_kb())
         return
 
     data = await state.get_data()
     if "client_id" not in data or "score" not in data:
         await state.clear()
-        await cb.message.answer("⚠️ اطلاعات ناقص است. لطفاً دوباره تلاش کنید.", reply_markup=customer_main_kb())
+        await edit_or_send(cb, "⚠️ اطلاعات ناقص است. لطفاً دوباره تلاش کنید.", customer_main_kb())
         return
 
     async with AsyncSessionLocal() as session:
@@ -98,7 +99,7 @@ async def customer_feedback_confirm(cb: types.CallbackQuery, state: FSMContext):
         )
 
     await state.clear()
-    await cb.message.answer("✅ بازخورد شما ثبت شد. ممنون از همکاری شما!", reply_markup=customer_main_kb())
+    await edit_or_send(cb, "✅ بازخورد شما ثبت شد. ممنون از همکاری شما!", customer_main_kb())
 
 # ---------- گزارش خلاصه مشتری ----------
 @router.callback_query(F.data == "customer_summary")

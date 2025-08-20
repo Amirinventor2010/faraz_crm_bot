@@ -14,6 +14,7 @@ from keyboards.staff import (
     activity_types_inline_kb,
 )
 from keyboards.common import back_reply_kb, confirm_inline_kb, BACK_TEXT
+from utils.ui import edit_or_send
 
 router = Router()
 
@@ -21,7 +22,7 @@ router = Router()
 @router.callback_query(F.data == "staff_menu")
 async def staff_menu(cb: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await cb.message.answer("پنل نیروی مارکتینگ:", reply_markup=staff_main_kb())
+    await edit_or_send(cb, "پنل نیروی مارکتینگ:", staff_main_kb())
 
 # ---------- ثبت فعالیت جدید ----------
 class AddActivity(StatesGroup):
@@ -74,7 +75,6 @@ async def add_activity_pick_type(cb: types.CallbackQuery, state: FSMContext):
     """اگر نوع فعالیت با دکمه انتخاب شد"""
     val = cb.data.split(":", 1)[1]
     if val == "other":
-        # ورود تایپی در پیام بعد
         await state.set_state(AddActivity.pick_type)
         await cb.message.answer("نوع فعالیت را تایپ کنید:", reply_markup=back_reply_kb())
         return
@@ -193,7 +193,6 @@ async def add_activity_initial_result(msg: types.Message, state: FSMContext):
     )
     await state.set_state(AddActivity.confirm)
     await msg.answer(preview)
-    # همیشه یک متن غیرفارغ قبل از کیبورد بده تا خطای text must be non-empty نگیریم
     await msg.answer("انتخاب کنید:", reply_markup=confirm_inline_kb("act_confirm", "act_cancel"))
 
 @router.callback_query(AddActivity.confirm, F.data.in_({"act_confirm", "act_cancel"}))
@@ -201,16 +200,15 @@ async def add_activity_confirm_or_cancel(cb: types.CallbackQuery, state: FSMCont
     """تأیید/لغو ثبت فعالیت"""
     if cb.data == "act_cancel":
         await state.clear()
-        await cb.message.answer("لغو شد.", reply_markup=staff_main_kb())
+        await edit_or_send(cb, "لغو شد.", staff_main_kb())
         return
 
     data = await state.get_data()
 
-    # حداقل‌های لازم را چک کنیم تا اگر state ناقص شد، ارور نده
     required = ("client_id", "activity_type", "ts")
     if any(k not in data or data[k] in (None, "") for k in required):
         await state.clear()
-        await cb.message.answer("⚠️ اطلاعات فرم ناقص است. لطفاً مجدداً تلاش کنید.", reply_markup=staff_main_kb())
+        await edit_or_send(cb, "⚠️ اطلاعات فرم ناقص است. لطفاً مجدداً تلاش کنید.", staff_main_kb())
         return
 
     staff_tg = cb.from_user.id
@@ -218,7 +216,7 @@ async def add_activity_confirm_or_cancel(cb: types.CallbackQuery, state: FSMCont
         user = await crud.get_user_by_telegram_id(session, staff_tg)
         if not user:
             await state.clear()
-            await cb.message.answer("⚠️ کاربر یافت نشد.", reply_markup=staff_main_kb())
+            await edit_or_send(cb, "⚠️ کاربر یافت نشد.", staff_main_kb())
             return
 
         act = await crud.create_activity(
@@ -241,4 +239,4 @@ async def add_activity_confirm_or_cancel(cb: types.CallbackQuery, state: FSMCont
         )
 
     await state.clear()
-    await cb.message.answer("✅ فعالیت ثبت شد.", reply_markup=staff_main_kb())
+    await edit_or_send(cb, "✅ فعالیت ثبت شد.", staff_main_kb())
