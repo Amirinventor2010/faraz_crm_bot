@@ -21,6 +21,8 @@ from keyboards.admin import (
     admin_reports_kb, admin_export_kb,
     admin_kpi_kb, clients_inline_kb_for_kpi,
     assign_clients_kb, assign_staff_kb,
+    report_clients_kb, report_staff_kb,
+    back_to_clients_reports_kb, back_to_staff_reports_kb,
 )
 from keyboards.common import back_reply_kb, confirm_inline_kb, BACK_TEXT
 from utils.ui import edit_or_send
@@ -188,7 +190,6 @@ async def add_staff_status(msg: types.Message, state: FSMContext):
         await msg.answer("❌ مقدار معتبر: ACTIVE یا INACTIVE")
         return
 
-    # فیکس: ذخیره‌ی status داخل FSM
     await state.update_data(status=status)
 
     data = await state.get_data()
@@ -219,8 +220,6 @@ async def add_staff_confirm_or_cancel(cb: types.CallbackQuery, state: FSMContext
         return
 
     data = await state.get_data()
-
-    # محافظ: اگر فیلدی جا افتاده باشد
     required = ("role", "name", "telegram_id", "status")
     missing = [k for k in required if not data.get(k)]
     if missing:
@@ -482,7 +481,6 @@ class AssignClient(StatesGroup):
 
 @router.callback_query(F.data == "admin_assign")
 async def assign_start(cb: types.CallbackQuery, state: FSMContext):
-    """مرحله ۱: نمایش لیست مشتری‌ها به صورت دکمه"""
     async with AsyncSessionLocal() as session:
         clients = await crud.list_all_clients(session)
     if not clients:
@@ -495,14 +493,12 @@ async def assign_start(cb: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(AssignClient.pick_client, F.data.startswith("assign_pick_client:"))
 async def assign_pick_client(cb: types.CallbackQuery, state: FSMContext):
-    """پس از انتخاب مشتری → نمایش لیست نیروها (با ظرفیت)"""
     client_id = int(cb.data.split(":")[1])
     await state.update_data(client_id=client_id)
 
     async with AsyncSessionLocal() as session:
-        staff_tuples = await crud.list_staff_with_capacity(session)  # [(User, cur_cnt, cap)]
+        staff_tuples = await crud.list_staff_with_capacity(session)
         if not staff_tuples:
-            # اگر هیچ نیروی ظرفیت‌دار نبود، لیست همه نیروهای فعال را با شمارنده نشان بده
             staff_all = await crud.list_staff_active(session)
             tuples = []
             for s in staff_all:
@@ -521,7 +517,6 @@ async def assign_pick_client(cb: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(AssignClient.pick_staff, F.data == "assign_auto")
 async def assign_auto(cb: types.CallbackQuery, state: FSMContext):
-    """تخصیص خودکار بر اساس ظرفیت/کم‌بارترین نیرو"""
     data = await state.get_data()
     client_id = data.get("client_id")
     if not client_id:
@@ -548,7 +543,6 @@ async def assign_auto(cb: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(AssignClient.pick_staff, F.data.startswith("assign_pick_staff:"))
 async def assign_pick_staff(cb: types.CallbackQuery, state: FSMContext):
-    """تخصیص دستی: پس از انتخاب نیرو از لیست"""
     staff_id = int(cb.data.split(":")[1])
     data = await state.get_data()
     client_id = data.get("client_id")
@@ -637,7 +631,7 @@ async def kpi_confirm(cb: types.CallbackQuery, state: FSMContext):
 
 
 # -----------------------------
-# 📊 گزارش هفتگی مدیر
+# 📊 گزارش‌ها
 # -----------------------------
 @router.callback_query(F.data == "admin_reports_weekly")
 async def admin_report_weekly(cb: types.CallbackQuery, state: FSMContext):
@@ -646,9 +640,8 @@ async def admin_report_weekly(cb: types.CallbackQuery, state: FSMContext):
 
     async with AsyncSessionLocal() as session:
         clients = await crud.list_all_clients(session)
-
         if not clients:
-            await cb.message.answer("هیچ مشتری‌ای ثبت نشده است.")
+            await edit_or_send(cb, "هیچ مشتری‌ای ثبت نشده است.", admin_reports_kb())
             return
 
         lines = ["📊 گزارش هفتگی مشتریان\n"]
@@ -678,8 +671,7 @@ async def admin_report_weekly(cb: types.CallbackQuery, state: FSMContext):
             lines.append(
                 f"\n1️⃣ مشتری: {c.business_name}\n"
                 f"- وضعیت: {status_emoji}\n"
-                f"- KPI فعلی: {acts} / {target}\n"
-                f"- فعالیت‌ها (7روز): {acts}\n"
+                f"- KPI فعلی (۷روز): {acts} / {target}\n"
                 f"- بازخورد: {fb_h}\n"
                 f"- آخرین فعالیت: {last_h}"
             )
@@ -694,7 +686,99 @@ async def admin_report_weekly(cb: types.CallbackQuery, state: FSMContext):
             lines.append("\n⚠️ هشدارها:")
             lines.extend([f"- {w}" for w in warn_lines])
 
-        await cb.message.answer("\n".join(lines), reply_markup=admin_reports_kb())
+        await edit_or_send(cb, "\n".join(lines), admin_reports_kb())
+
+
+@router.callback_query(F.data == "admin_reports_clients")
+async def admin_reports_clients(cb: types.CallbackQuery, state: FSMContext):
+    async with AsyncSessionLocal() as session:
+        clients = await crud.list_all_clients(session)
+    if not clients:
+        await edit_or_send(cb, "هیچ مشتری‌ای ثبت نشده است.", admin_reports_kb())
+        return
+    await edit_or_send(cb, "یک مشتری را انتخاب کنید:", report_clients_kb(clients))
+
+
+@router.callback_query(F.data.startswith("report_client:"))
+async def admin_report_one_client(cb: types.CallbackQuery, state: FSMContext):
+    client_id = int(cb.data.split(":")[1])
+    end_dt = datetime.utcnow()
+    start_dt = end_dt - timedelta(days=7)
+
+    async with AsyncSessionLocal() as session:
+        c = await crud.get_client_by_id(session, client_id)
+        if not c:
+            await edit_or_send(cb, "❌ مشتری یافت نشد.", admin_reports_kb())
+            return
+        kpi = await crud.get_client_kpi(session, client_id)
+        target = (kpi.target_per_week if kpi else 0)
+        acts_7d = await crud.count_activities_in_range(session, client_id, start_dt, end_dt)
+        fb_avg = await crud.avg_feedback_for_client(session, client_id)
+        last_ts = await crud.last_activity_ts(session, client_id)
+        staff = await crud.get_user_by_id(session, c.assigned_staff_id) if c.assigned_staff_id else None
+
+    status_emoji = "⚪️"
+    if target > 0:
+        ratio = acts_7d / max(target, 1)
+        if ratio >= 1.0:
+            status_emoji = "🟢"
+        elif ratio >= KPI_YELLOW_RATIO:
+            status_emoji = "🟡"
+        else:
+            status_emoji = "🔴"
+
+    fb_h = f"{fb_avg:.2f}" if fb_avg is not None else "-"
+    last_h = last_ts.strftime("%Y-%m-%d %H:%M") if last_ts else "-"
+    staff_h = f"{staff.name} (ID={staff.id})" if staff else "-"
+
+    txt = (
+        f"📄 گزارش مشتری: {c.business_name} (#{c.id})\n"
+        f"- وضعیت KPI (۷روز): {status_emoji}  {acts_7d} / {target}\n"
+        f"- میانگین رضایت: {fb_h}\n"
+        f"- آخرین فعالیت: {last_h}\n"
+        f"- نیروی تخصیص‌یافته: {staff_h}\n"
+    )
+    await edit_or_send(cb, txt, back_to_clients_reports_kb())
+
+
+@router.callback_query(F.data == "admin_reports_staff")
+async def admin_reports_staff(cb: types.CallbackQuery, state: FSMContext):
+    async with AsyncSessionLocal() as session:
+        staff = await crud.list_staff_active(session)
+    if not staff:
+        await edit_or_send(cb, "هیچ نیروی فعالی ثبت نشده است.", admin_reports_kb())
+        return
+    await edit_or_send(cb, "یک نیرو را انتخاب کنید:", report_staff_kb(staff))
+
+
+@router.callback_query(F.data.startswith("report_staff:"))
+async def admin_report_one_staff(cb: types.CallbackQuery, state: FSMContext):
+    staff_id = int(cb.data.split(":")[1])
+    end_dt = datetime.utcnow()
+    start_dt = end_dt - timedelta(days=7)
+
+    async with AsyncSessionLocal() as session:
+        s = await crud.get_user_by_id(session, staff_id)
+        if not s:
+            await edit_or_send(cb, "❌ نیرو یافت نشد.", admin_reports_kb())
+            return
+        acts_7d = await crud.count_activities_in_range_by_staff(session, staff_id, start_dt, end_dt)
+        clients = await crud.list_clients_for_staff(session, staff_id)
+        fb_avg = await crud.avg_feedback_for_staff_clients(session, staff_id)
+        last_ts = await crud.last_activity_ts_for_staff(session, staff_id)
+
+    clients_h = ", ".join([c.business_name for c in clients]) if clients else "-"
+    fb_h = f"{fb_avg:.2f}" if fb_avg is not None else "-"
+    last_h = last_ts.strftime("%Y-%m-%d %H:%M") if last_ts else "-"
+
+    txt = (
+        f"👤 گزارش نیرو: {s.name or 'بدون‌نام'} (ID={s.id})\n"
+        f"- فعالیت‌ها (۷ روز اخیر): {acts_7d}\n"
+        f"- مشتریان تحت پوشش: {clients_h}\n"
+        f"- میانگین رضایت مشتریان: {fb_h}\n"
+        f"- آخرین فعالیت: {last_h}\n"
+    )
+    await edit_or_send(cb, txt, back_to_staff_reports_kb())
 
 
 # -----------------------------

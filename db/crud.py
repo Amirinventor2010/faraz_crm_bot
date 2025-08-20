@@ -27,7 +27,7 @@ async def is_admin_tgid(session: AsyncSession, tg_id: int) -> bool:
     if _is_admin_tg(tg_id):
         return True
     res = await session.execute(select(User).where(User.telegram_id == tg_id))
-    u = res.scalar_one_or_none()
+    u = res.scalar_one_or_none
     return bool(u and u.role == "ADMIN")
 
 
@@ -168,6 +168,37 @@ async def last_activity_ts(session: AsyncSession, client_id: int) -> Optional[da
     return res.scalar_one_or_none()
 
 
+# --- for Staff reports ---
+async def count_activities_in_range_by_staff(
+    session: AsyncSession, staff_id: int, start_dt: datetime, end_dt: datetime
+) -> int:
+    res = await session.execute(
+        select(func.count()).select_from(Activity).where(
+            Activity.staff_id == staff_id,
+            Activity.ts >= start_dt,
+            Activity.ts < end_dt
+        )
+    )
+    return int(res.scalar() or 0)
+
+
+async def last_activity_ts_for_staff(session: AsyncSession, staff_id: int) -> Optional[datetime]:
+    res = await session.execute(
+        select(Activity.ts).where(Activity.staff_id == staff_id).order_by(desc(Activity.ts)).limit(1)
+    )
+    return res.scalar_one_or_none()
+
+
+async def avg_feedback_for_staff_clients(session: AsyncSession, staff_id: int) -> Optional[float]:
+    # میانگین رضایت برای تمام مشتریانی که به این نیرو تخصیص یافته‌اند
+    sub = select(Client.id).where(Client.assigned_staff_id == staff_id).subquery()
+    res = await session.execute(
+        select(func.avg(Feedback.score)).where(Feedback.client_id.in_(select(sub)))
+    )
+    val = res.scalar()
+    return float(val) if val is not None else None
+
+
 # ---------------------------
 # Feedback
 # ---------------------------
@@ -204,7 +235,7 @@ async def list_staff_with_capacity(
     session: AsyncSession,
 ) -> List[Tuple[User, int, int]]:
     """
-    لیست نیروهای فعال (ROLE_STAFF, STATUS_ACTIVE) که ظرفیت آزاد دارند.
+    نیروهای فعال با ظرفیت آزاد.
     خروجی: [(User, current_count, max_capacity)]
     max_capacity=0 → نامحدود
     """
@@ -221,8 +252,7 @@ async def list_staff_with_capacity(
 
 async def pick_staff_by_capacity(session: AsyncSession) -> Optional[User]:
     """
-    انتخاب نیروی فعال با کمترین تعداد مشتری تخصیص‌یافته که هنوز ظرفیت دارد.
-    max_capacity=0 => نامحدود
+    کم‌بارترین نیروی فعال که ظرفیت دارد (max_capacity=0 نامحدود).
     """
     staff_list = await list_staff_active(session)
     candidates = []
@@ -232,7 +262,6 @@ async def pick_staff_by_capacity(session: AsyncSession) -> Optional[User]:
         cap = int(s.max_capacity or 0)
         has_capacity = (cap == 0) or (cur_cnt < cap)
         if has_capacity:
-            # معیار: کمترین مشتری → در تساوی، id کوچکتر
             candidates.append((cur_cnt, s.id, s))
 
     if not candidates:

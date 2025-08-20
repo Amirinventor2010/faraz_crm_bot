@@ -27,7 +27,9 @@ def admin_setup_kb() -> InlineKeyboardMarkup:
 
 def admin_reports_kb() -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="🗓 گزارش هفتگی", callback_data="admin_reports_weekly")],
+        [InlineKeyboardButton(text="🗓 گزارش هفتگی کلی", callback_data="admin_reports_weekly")],
+        [InlineKeyboardButton(text="📄 گزارش مشتری‌ها (انتخابی)", callback_data="admin_reports_clients")],
+        [InlineKeyboardButton(text="👥 گزارش نیروها (انتخابی)", callback_data="admin_reports_staff")],
         [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="admin_back_main")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -65,10 +67,6 @@ def clients_inline_kb_for_kpi(clients) -> InlineKeyboardMarkup:
 # Assign: انتخاب مشتری و نیرو
 # ---------------------------
 def assign_clients_kb(clients) -> InlineKeyboardMarkup:
-    """
-    لیست مشتری‌ها برای تخصیص:
-    هر دکمه: «نام کسب‌وکار (#id)» → assign_pick_client:{client_id}
-    """
     rows = []
     for c in clients:
         title = f"{getattr(c, 'business_name', 'بدون‌نام')} (#{c.id})"
@@ -78,10 +76,6 @@ def assign_clients_kb(clients) -> InlineKeyboardMarkup:
 
 
 def assign_staff_kb(staff_tuples, include_auto: bool = True) -> InlineKeyboardMarkup:
-    """
-    staff_tuples: list of (User, current_count, max_capacity)
-    نمایش ظرفیت به شکل cur/cap یا ∞
-    """
     rows = []
     if include_auto:
         rows.append([InlineKeyboardButton(text="🤖 تخصیص خودکار", callback_data="assign_auto")])
@@ -92,4 +86,41 @@ def assign_staff_kb(staff_tuples, include_auto: bool = True) -> InlineKeyboardMa
         rows.append([InlineKeyboardButton(text=title, callback_data=f"assign_pick_staff:{s.id}")])
 
     rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="admin_setup")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ---------------------------
+# Reports: انتخاب مشتری/نیرو + برگشت
+# ---------------------------
+def report_clients_kb(clients) -> InlineKeyboardMarkup:
+    rows = []
+    for c in clients:
+        title = f"{getattr(c, 'business_name', 'بدون‌نام')} (#{c.id})"
+        rows.append([InlineKeyboardButton(text=title, callback_data=f"report_client:{c.id}")])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="admin_reports_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def report_staff_kb(staff_list) -> InlineKeyboardMarkup:
+    rows = []
+    for s in staff_list:
+        title = f"{getattr(s, 'name', 'بدون‌نام')} (ID={s.id})"
+        rows.append([InlineKeyboardButton(text=title, callback_data=f"report_staff:{s.id}")])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="admin_reports_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def back_to_clients_reports_kb() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="⬅️ بازگشت به فهرست مشتری‌ها", callback_data="admin_reports_clients")],
+        [InlineKeyboardButton(text="🔙 بازگشت به گزارش‌ها", callback_data="admin_reports_menu")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def back_to_staff_reports_kb() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="⬅️ بازگشت به فهرست نیروها", callback_data="admin_reports_staff")],
+        [InlineKeyboardButton(text="🔙 بازگشت به گزارش‌ها", callback_data="admin_reports_menu")],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
