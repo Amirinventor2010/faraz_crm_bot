@@ -10,6 +10,7 @@ def admin_main_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📊 گزارش‌ها", callback_data="admin_reports_menu")],
         [InlineKeyboardButton(text="📤 خروجی و دانلود", callback_data="admin_export_menu")],
         [InlineKeyboardButton(text="🎯 KPI / SLA", callback_data="admin_kpi_menu")],
+        [InlineKeyboardButton(text="💰 ثبت فروش جدید", callback_data="admin_add_sale")],  # ✅ جدید
         [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="back_to_entry")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -123,4 +124,16 @@ def back_to_staff_reports_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⬅️ بازگشت به فهرست نیروها", callback_data="admin_reports_staff")],
         [InlineKeyboardButton(text="🔙 بازگشت به گزارش‌ها", callback_data="admin_reports_menu")],
     ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ---------------------------
+# Sales: انتخاب مشتری برای ثبت فروش (جدید)
+# ---------------------------
+def sales_clients_kb(clients) -> InlineKeyboardMarkup:
+    rows = []
+    for c in clients:
+        title = f"{getattr(c, 'business_name', 'بدون‌نام')} (#{c.id})"
+        rows.append([InlineKeyboardButton(text=title, callback_data=f"sale_pick_client:{c.id}")])
+    rows.append([InlineKeyboardButton(text="⬅️ انصراف", callback_data="admin_back_main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

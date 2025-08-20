@@ -14,49 +14,42 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     telegram_id: Mapped[int] = mapped_column(unique=True, index=True)
     role: Mapped[str] = mapped_column(String(16))
-    name: Mapped[str] = mapped_column(String(120))
-    phone: Mapped[str | None]
-    email: Mapped[str | None]
+    name: Mapped[str | None] = mapped_column(String(128))
+    phone: Mapped[str | None] = mapped_column(String(64))
+    email: Mapped[str | None] = mapped_column(String(128))
     skills: Mapped[dict | None] = mapped_column(JSON)
-    max_capacity: Mapped[int | None]
+    max_capacity: Mapped[int | None] = mapped_column(Integer, default=0)  # 0 = نامحدود
     status: Mapped[str] = mapped_column(String(16), default=STATUS_ACTIVE)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    # با __future__.annotations می‌تونیم به Client همین‌جا ارجاع بدیم
-    clients: Mapped[list[Client]] = relationship(back_populates="assigned_staff")
 
 
 class Client(Base):
     __tablename__ = "clients"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    business_name: Mapped[str] = mapped_column(String(200))
-    industry: Mapped[str | None]
-    contract_date: Mapped[str | None]
+    business_name: Mapped[str] = mapped_column(String(128))
+    industry: Mapped[str | None] = mapped_column(String(64))
+    contract_date: Mapped[str | None] = mapped_column(String(32))  # ساده برای MVP
     platforms: Mapped[dict | None] = mapped_column(JSON)
-    city: Mapped[str | None]
-    sales_source: Mapped[str | None]
-    feedback_channel: Mapped[str | None]
+    city: Mapped[str | None] = mapped_column(String(64))
+    sales_source: Mapped[str | None] = mapped_column(String(64))
+    feedback_channel: Mapped[str | None] = mapped_column(String(64))
     contact_info: Mapped[dict | None] = mapped_column(JSON)
     notes: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default=STATUS_ACTIVE)
+    telegram_id: Mapped[int | None]
     assigned_staff_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-    telegram_id: Mapped[int | None] = mapped_column(Integer, index=True)  # برای ورود مشتری
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    # ✅ اینجا مشکل بود — نباید داخل کوتیشن با | بیاد
-    assigned_staff: Mapped[User | None] = relationship(back_populates="clients")
+    assigned_staff: Mapped["User"] = relationship("User", primaryjoin="User.id==Client.assigned_staff_id")
 
 
 class ClientKPI(Base):
-    """
-    KPI هفتگی برای مشتری (بر اساس تعداد فعالیت هفتگی)
-    """
     __tablename__ = "client_kpis"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
-    target_per_week: Mapped[int] = mapped_column(Integer, default=5)
+    target_per_week: Mapped[int] = mapped_column(Integer, default=0)
     warn_ratio: Mapped[float] = mapped_column(Float, default=0.6)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -65,14 +58,14 @@ class Activity(Base):
     __tablename__ = "activities"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"))
-    staff_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    activity_type: Mapped[str]
-    platform: Mapped[str | None]
-    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    goal: Mapped[str | None]
-    evidence_link: Mapped[str | None]
-    initial_result: Mapped[str | None]
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
+    staff_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    activity_type: Mapped[str] = mapped_column(String(64))
+    platform: Mapped[str | None] = mapped_column(String(64))
+    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    goal: Mapped[str | None] = mapped_column(String(256))
+    evidence_link: Mapped[str | None] = mapped_column(String(512))
+    initial_result: Mapped[str | None] = mapped_column(String(256))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -80,9 +73,21 @@ class Feedback(Base):
     __tablename__ = "feedbacks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"))
-    score: Mapped[int]
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
+    score: Mapped[int] = mapped_column(Integer)
     comment: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Sale(Base):
+    __tablename__ = "sales"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    amount: Mapped[float] = mapped_column(Float, default=0.0)  # مبلغ فروش
+    source: Mapped[str | None] = mapped_column(String(64))     # منبع/کانال فروش
+    note: Mapped[str | None] = mapped_column(String(256))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

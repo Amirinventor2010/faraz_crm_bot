@@ -23,9 +23,11 @@ from keyboards.admin import (
     assign_clients_kb, assign_staff_kb,
     report_clients_kb, report_staff_kb,
     back_to_clients_reports_kb, back_to_staff_reports_kb,
+    sales_clients_kb,  # ✅ برای ثبت فروش
 )
 from keyboards.common import back_reply_kb, confirm_inline_kb, BACK_TEXT
 from utils.ui import edit_or_send
+from config import SALES_WARN_THRESHOLD  # ✅ آستانه هشدار فروش
 
 router = Router()
 
@@ -630,6 +632,138 @@ async def kpi_confirm(cb: types.CallbackQuery, state: FSMContext):
     await edit_or_send(cb, "✅ KPI هفتگی ذخیره شد.", admin_kpi_kb())
 
 
+# =============================
+# 💰 ثبت فروش جدید (فقط مدیر)
+# =============================
+class AddSale(StatesGroup):
+    pick_client = State()
+    ts = State()
+    amount = State()
+    source = State()
+    note = State()
+    confirm = State()
+
+@router.callback_query(F.data == "admin_add_sale")
+async def admin_add_sale_start(cb: types.CallbackQuery, state: FSMContext):
+    async with AsyncSessionLocal() as session:
+        clients = await crud.list_all_clients(session)
+    if not clients:
+        await edit_or_send(cb, "هیچ مشتری‌ای ثبت نشده است.", admin_main_kb())
+        return
+    await state.set_state(AddSale.pick_client)
+    await edit_or_send(cb, "برای ثبت فروش، مشتری را انتخاب کنید:", sales_clients_kb(clients))
+
+@router.callback_query(AddSale.pick_client, F.data.startswith("sale_pick_client:"))
+async def admin_add_sale_pick_client(cb: types.CallbackQuery, state: FSMContext):
+    client_id = int(cb.data.split(":")[1])
+    async with AsyncSessionLocal() as session:
+        c = await crud.get_client_by_id(session, client_id)
+    if not c:
+        await edit_or_send(cb, "❌ مشتری یافت نشد.", admin_main_kb())
+        return
+    await state.update_data(client_id=client_id, client_name=c.business_name)
+    await state.set_state(AddSale.ts)
+    await cb.message.answer("تاریخ/ساعت فروش؟ (YYYY-MM-DD HH:MM یا «-» برای اکنون)", reply_markup=back_reply_kb())
+
+@router.message(AddSale.ts)
+async def admin_add_sale_ts(msg: types.Message, state: FSMContext):
+    if msg.text == BACK_TEXT:
+        await state.clear()
+        await msg.answer("لغو شد.", reply_markup=admin_main_kb())
+        return
+    val = (msg.text or "").strip()
+    if val == "-":
+        ts = datetime.utcnow()
+    else:
+        try:
+            ts = datetime.strptime(val, "%Y-%m-%d %H:%M")
+        except ValueError:
+            await msg.answer("❌ فرمت نادرست است. مثال: 2025-08-18 14:30 یا «-»")
+            return
+    await state.update_data(ts=ts.isoformat())
+    await state.set_state(AddSale.amount)
+    await msg.answer("مبلغ فروش؟ (عدد ≥ 0)", reply_markup=back_reply_kb())
+
+@router.message(AddSale.amount)
+async def admin_add_sale_amount(msg: types.Message, state: FSMContext):
+    if msg.text == BACK_TEXT:
+        await state.set_state(AddSale.ts)
+        await msg.answer("تاریخ/ساعت فروش؟ (YYYY-MM-DD HH:MM یا «-»)", reply_markup=back_reply_kb())
+        return
+    try:
+        amount = float((msg.text or "").strip())
+        if amount < 0:
+            raise ValueError()
+    except Exception:
+        await msg.answer("❌ مبلغ نامعتبر است. یک عدد ≥ 0 وارد کنید.")
+        return
+    await state.update_data(amount=amount)
+    await state.set_state(AddSale.source)
+    await msg.answer("منبع/کانال فروش؟ (اختیاری، یا «-»)", reply_markup=back_reply_kb())
+
+@router.message(AddSale.source)
+async def admin_add_sale_source(msg: types.Message, state: FSMContext):
+    if msg.text == BACK_TEXT:
+        await state.set_state(AddSale.amount)
+        await msg.answer("مبلغ فروش؟ (عدد ≥ 0)", reply_markup=back_reply_kb())
+        return
+    source = None if msg.text.strip() == "-" else msg.text.strip()
+    await state.update_data(source=source)
+    await state.set_state(AddSale.note)
+    await msg.answer("یادداشت (اختیاری، یا «-»):", reply_markup=back_reply_kb())
+
+@router.message(AddSale.note)
+async def admin_add_sale_note(msg: types.Message, state: FSMContext):
+    if msg.text == BACK_TEXT:
+        await state.set_state(AddSale.source)
+        await msg.answer("منبع/کانال فروش؟ (اختیاری، یا «-»)", reply_markup=back_reply_kb())
+        return
+    note = None if msg.text.strip() == "-" else msg.text.strip()
+    await state.update_data(note=note)
+
+    data = await state.get_data()
+    preview = (
+        "📌 پیش‌نمایش فروش\n\n"
+        f"- مشتری: {data.get('client_name')} (#{data.get('client_id')})\n"
+        f"- زمان: {data.get('ts')}\n"
+        f"- مبلغ: {data.get('amount')}\n"
+        f"- منبع: {data.get('source') or '-'}\n"
+        f"- یادداشت: {data.get('note') or '-'}\n\n"
+        "آیا ثبت شود؟"
+    )
+    await state.set_state(AddSale.confirm)
+    await msg.answer(preview)
+    await msg.answer("انتخاب کنید:", reply_markup=confirm_inline_kb("sale_confirm", "sale_cancel"))
+
+@router.callback_query(AddSale.confirm, F.data.in_({"sale_confirm", "sale_cancel"}))
+async def admin_add_sale_confirm(cb: types.CallbackQuery, state: FSMContext):
+    if cb.data == "sale_cancel":
+        await state.clear()
+        await edit_or_send(cb, "لغو شد.", admin_main_kb())
+        return
+
+    data = await state.get_data()
+    required = ("client_id", "ts", "amount")
+    if any(k not in data or data[k] in (None, "") for k in required):
+        await state.clear()
+        await edit_or_send(cb, "⚠️ اطلاعات فرم ناقص است.", admin_main_kb())
+        return
+
+    async with AsyncSessionLocal() as session:
+        s = await crud.create_sale(
+            session,
+            client_id=int(data["client_id"]),
+            ts=datetime.fromisoformat(data["ts"]),
+            amount=float(data["amount"]),
+            source=data.get("source"),
+            note=data.get("note"),
+        )
+        await crud.log_action(session, action="CREATE", entity="Sale", entity_id=s.id, diff_json=data)
+
+    await state.clear()
+    await edit_or_send(cb, "✅ فروش ثبت شد.", admin_main_kb())
+
+
 # -----------------------------
 # 📊 گزارش‌ها
 # -----------------------------
@@ -654,6 +788,7 @@ async def admin_report_weekly(cb: types.CallbackQuery, state: FSMContext):
             acts = await crud.count_activities_in_range(session, c.id, start_dt, end_dt)
             fb_avg = await crud.avg_feedback_for_client(session, c.id)
             last_ts = await crud.last_activity_ts(session, c.id)
+            sales_sum = await crud.sum_sales_in_range(session, c.id, start_dt, end_dt)  # ✅ جمع فروش ۷روز
 
             status_emoji = "⚪️"
             if target > 0:
@@ -667,20 +802,25 @@ async def admin_report_weekly(cb: types.CallbackQuery, state: FSMContext):
 
             fb_h = f"{fb_avg:.2f}" if fb_avg is not None else "-"
             last_h = last_ts.strftime("%Y-%m-%d") if last_ts else "-"
+            sales_h = f"{sales_sum:,.0f}"
 
             lines.append(
                 f"\n1️⃣ مشتری: {c.business_name}\n"
                 f"- وضعیت: {status_emoji}\n"
                 f"- KPI فعلی (۷روز): {acts} / {target}\n"
+                f"- فروش (۷روز): {sales_h}\n"
                 f"- بازخورد: {fb_h}\n"
                 f"- آخرین فعالیت: {last_h}"
             )
 
+            # هشدارها
             if fb_avg is not None and fb_avg < FEEDBACK_WARN_SCORE:
                 warn_lines.append(f"• رضایت پایین‌تر از آستانه ({c.business_name}): {fb_h}")
             if last_ts is None or (end_dt - last_ts).days > INACTIVITY_WARN_DAYS:
                 days = (end_dt - last_ts).days if last_ts else "∞"
                 warn_lines.append(f"• عدم فعالیت نیرو > {INACTIVITY_WARN_DAYS} روز ({c.business_name}): {days} روز")
+            if SALES_WARN_THRESHOLD > 0 and sales_sum < SALES_WARN_THRESHOLD:
+                warn_lines.append(f"• فروش هفتگی پایین‌تر از آستانه ({c.business_name}): {sales_h} < {SALES_WARN_THRESHOLD:,.0f}")
 
         if warn_lines:
             lines.append("\n⚠️ هشدارها:")
@@ -715,9 +855,11 @@ async def admin_report_one_client(cb: types.CallbackQuery, state: FSMContext):
         acts_7d = await crud.count_activities_in_range(session, client_id, start_dt, end_dt)
         fb_avg = await crud.avg_feedback_for_client(session, client_id)
         last_ts = await crud.last_activity_ts(session, client_id)
+        sales_7d = await crud.sum_sales_in_range(session, client_id, start_dt, end_dt)  # ✅ فروش ۷روز
         staff = await crud.get_user_by_id(session, c.assigned_staff_id) if c.assigned_staff_id else None
         recent_acts = await crud.list_recent_activities_for_client(session, client_id, limit=10)
         recent_fb = await crud.list_recent_feedback_for_client(session, client_id, limit=10)
+        recent_sales = await crud.list_recent_sales_for_client(session, client_id, limit=10)  # ✅ فروش‌های اخیر
 
     status_emoji = "⚪️"
     if target > 0:
@@ -732,10 +874,12 @@ async def admin_report_one_client(cb: types.CallbackQuery, state: FSMContext):
     fb_h = f"{fb_avg:.2f}" if fb_avg is not None else "-"
     last_h = last_ts.strftime("%Y-%m-%d %H:%M") if last_ts else "-"
     staff_h = f"{staff.name} (ID={staff.id})" if staff else "-"
+    sales_h = f"{sales_7d:,.0f}"
 
     lines = [
         f"📄 گزارش مشتری: {c.business_name} (#{c.id})",
         f"- وضعیت KPI (۷روز): {status_emoji}  {acts_7d} / {target}",
+        f"- فروش (۷روز): {sales_h}",
         f"- میانگین رضایت: {fb_h}",
         f"- آخرین فعالیت: {last_h}",
         f"- نیروی تخصیص‌یافته: {staff_h}",
@@ -758,6 +902,16 @@ async def admin_report_one_client(cb: types.CallbackQuery, state: FSMContext):
             if evd: extra.append(f"مدرک: {evd}")
             extra_h = " | ".join(extra) if extra else "-"
             lines.append(f"• {ts_h} — {typ} در {plat} — {extra_h}")
+
+    # فروش‌های اخیر
+    if recent_sales:
+        lines.append("\n💰 فروش‌های اخیر (۱۰ مورد آخر):")
+        for s in recent_sales:
+            ts_h = s.ts.strftime("%Y-%m-%d %H:%M")
+            amt = f"{(s.amount or 0):,.0f}"
+            src = s.source or "-"
+            note = s.note or "-"
+            lines.append(f"• {ts_h} — مبلغ: {amt} — منبع: {src} — یادداشت: {note}")
 
     # بازخوردهای اخیر
     if recent_fb:
@@ -798,14 +952,17 @@ async def admin_report_one_staff(cb: types.CallbackQuery, state: FSMContext):
         fb_avg = await crud.avg_feedback_for_staff_clients(session, staff_id)
         last_ts = await crud.last_activity_ts_for_staff(session, staff_id)
         recent_acts = await crud.list_recent_activities_for_staff(session, staff_id, limit=10)
+        sales_sum = await crud.sum_sales_in_range_for_staff(session, staff_id, start_dt, end_dt)  # ✅ فروش ۷روز
 
     clients_h = ", ".join([c.business_name for c in clients]) if clients else "-"
     fb_h = f"{fb_avg:.2f}" if fb_avg is not None else "-"
     last_h = last_ts.strftime("%Y-%m-%d %H:%M") if last_ts else "-"
+    sales_h = f"{sales_sum:,.0f}"
 
     lines = [
         f"👤 گزارش نیرو: {s.name or 'بدون‌نام'} (ID={s.id})",
         f"- فعالیت‌ها (۷ روز اخیر): {acts_7d}",
+        f"- فروش مشتریان تحت‌پوشش (۷روز): {sales_h}",
         f"- مشتریان تحت پوشش: {clients_h}",
         f"- میانگین رضایت مشتریان: {fb_h}",
         f"- آخرین فعالیت: {last_h}",
@@ -821,7 +978,6 @@ async def admin_report_one_staff(cb: types.CallbackQuery, state: FSMContext):
             goal = getattr(a, "goal", None)
             res = getattr(a, "initial_result", None)
             evd = getattr(a, "evidence_link", None)
-            # نام مشتری مربوط به این فعالیت
             client_id = getattr(a, "client_id", None)
             client_part = f"(#{client_id})" if client_id else ""
             extra = []
@@ -835,7 +991,7 @@ async def admin_report_one_staff(cb: types.CallbackQuery, state: FSMContext):
 
 
 # -----------------------------
-# 📤 خروجی هفتگی CSV
+# 📤 خروجی هفتگی CSV (به‌روزشده: شامل فروش)
 # -----------------------------
 @router.callback_query(F.data == "admin_export_week_csv")
 async def admin_export_week_csv(cb: types.CallbackQuery, state: FSMContext):
@@ -847,12 +1003,13 @@ async def admin_export_week_csv(cb: types.CallbackQuery, state: FSMContext):
 
         buf = io.StringIO()
         writer = csv.writer(buf)
-        writer.writerow(["client_id", "business_name", "kpi_target", "acts_7d", "avg_feedback", "last_activity_utc"])
+        writer.writerow(["client_id", "business_name", "kpi_target", "acts_7d", "sales_7d", "avg_feedback", "last_activity_utc"])
 
         for c in clients:
             kpi = await crud.get_client_kpi(session, c.id)
             target = (kpi.target_per_week if kpi else 0)
             acts = await crud.count_activities_in_range(session, c.id, start_dt, end_dt)
+            sales_sum = await crud.sum_sales_in_range(session, c.id, start_dt, end_dt)  # ✅
             fb_avg = await crud.avg_feedback_for_client(session, c.id)
             last_ts = await crud.last_activity_ts(session, c.id)
             writer.writerow([
@@ -860,6 +1017,7 @@ async def admin_export_week_csv(cb: types.CallbackQuery, state: FSMContext):
                 c.business_name,
                 target,
                 acts,
+                f"{sales_sum:.2f}",
                 f"{fb_avg:.2f}" if fb_avg is not None else "",
                 last_ts.isoformat() if last_ts else ""
             ])
@@ -867,6 +1025,6 @@ async def admin_export_week_csv(cb: types.CallbackQuery, state: FSMContext):
     data = buf.getvalue().encode("utf-8-sig")
     await cb.message.answer_document(
         types.BufferedInputFile(data, filename="weekly_summary.csv"),
-        caption="📤 خروجی هفتگی (7 روز اخیر) — فعالیت/بازخورد/KPI"
+        caption="📤 خروجی هفتگی (7 روز اخیر) — KPI/فعالیت/فروش/بازخورد"
     )
     await cb.message.answer("گزینه‌های دیگر:", reply_markup=admin_export_kb())

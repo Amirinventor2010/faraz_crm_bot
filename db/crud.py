@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 from sqlalchemy import select, update, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import User, Client, ClientKPI, Activity, Feedback, AuditLog
+from .models import User, Client, ClientKPI, Activity, Feedback, AuditLog, Sale
 from utils.constants import ROLE_STAFF, STATUS_ACTIVE
 from config import ADMIN_TELEGRAM_IDS
 
@@ -168,7 +168,7 @@ async def last_activity_ts(session: AsyncSession, client_id: int) -> Optional[da
     return res.scalar_one_or_none()
 
 
-# --- برای گزارش نیرو ---
+# --- گزارش نیرو ---
 async def count_activities_in_range_by_staff(
     session: AsyncSession, staff_id: int, start_dt: datetime, end_dt: datetime
 ) -> int:
@@ -238,15 +238,53 @@ async def list_recent_feedback_for_client(
 
 
 async def avg_feedback_for_staff_clients(session: AsyncSession, staff_id: int) -> Optional[float]:
-    """
-    میانگین امتیاز بازخورد تمام مشتریانی که به این نیرو تخصیص یافته‌اند.
-    """
     subq = select(Client.id).where(Client.assigned_staff_id == staff_id)
     res = await session.execute(
         select(func.avg(Feedback.score)).where(Feedback.client_id.in_(subq))
     )
     val = res.scalar()
     return float(val) if val is not None else None
+
+
+# ---------------------------
+# Sales
+# ---------------------------
+async def create_sale(session: AsyncSession, **data) -> Sale:
+    s = Sale(**data)
+    session.add(s)
+    await session.commit()
+    await session.refresh(s)
+    return s
+
+
+async def sum_sales_in_range(session: AsyncSession, client_id: int, start_dt: datetime, end_dt: datetime) -> float:
+    res = await session.execute(
+        select(func.coalesce(func.sum(Sale.amount), 0.0)).where(
+            Sale.client_id == client_id,
+            Sale.ts >= start_dt,
+            Sale.ts < end_dt
+        )
+    )
+    return float(res.scalar() or 0.0)
+
+
+async def sum_sales_in_range_for_staff(session: AsyncSession, staff_id: int, start_dt: datetime, end_dt: datetime) -> float:
+    subq = select(Client.id).where(Client.assigned_staff_id == staff_id)
+    res = await session.execute(
+        select(func.coalesce(func.sum(Sale.amount), 0.0)).where(
+            Sale.client_id.in_(subq),
+            Sale.ts >= start_dt,
+            Sale.ts < end_dt
+        )
+    )
+    return float(res.scalar() or 0.0)
+
+
+async def list_recent_sales_for_client(session: AsyncSession, client_id: int, limit: int = 10) -> List[Sale]:
+    res = await session.execute(
+        select(Sale).where(Sale.client_id == client_id).order_by(desc(Sale.ts)).limit(limit)
+    )
+    return list(res.scalars())
 
 
 # ---------------------------
@@ -262,14 +300,7 @@ async def log_action(session: AsyncSession, **data) -> AuditLog:
 # ---------------------------
 # Capacity helpers (Assign)
 # ---------------------------
-async def list_staff_with_capacity(
-    session: AsyncSession,
-) -> List[Tuple[User, int, int]]:
-    """
-    نیروهای فعال با ظرفیت آزاد.
-    خروجی: [(User, current_count, max_capacity)]
-    max_capacity=0 → نامحدود
-    """
+async def list_staff_with_capacity(session: AsyncSession) -> List[Tuple[User, int, int]]:
     staff = await list_staff_active(session)
     result = []
     for s in staff:
@@ -282,21 +313,15 @@ async def list_staff_with_capacity(
 
 
 async def pick_staff_by_capacity(session: AsyncSession) -> Optional[User]:
-    """
-    کم‌بارترین نیروی فعال که ظرفیت دارد (max_capacity=0 نامحدود).
-    """
     staff_list = await list_staff_active(session)
     candidates = []
-
     for s in staff_list:
         cur_cnt = await count_clients_for_staff(session, s.id)
         cap = int(s.max_capacity or 0)
         has_capacity = (cap == 0) or (cur_cnt < cap)
         if has_capacity:
             candidates.append((cur_cnt, s.id, s))
-
     if not candidates:
         return None
-
     candidates.sort(key=lambda t: (t[0], t[1]))
     return candidates[0][2]
