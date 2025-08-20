@@ -3,14 +3,15 @@ from __future__ import annotations
 from aiogram import Router, types, F
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from db.base import AsyncSessionLocal
 from db import crud
 from keyboards.customer import customer_main_kb, feedback_score_kb
 from keyboards.common import back_reply_kb, confirm_inline_kb, BACK_TEXT
 from utils.ui import edit_or_send
-from utils.notify import notify_client_feedback  # 🔔 ارسال نوتیفیکیشن بازخورد به گروه/تاپیک
+from utils.notify import notify_feedback
+from utils.constants import KPI_YELLOW_RATIO
 
 router = Router()
 
@@ -32,7 +33,7 @@ async def customer_add_feedback_start(cb: types.CallbackQuery, state: FSMContext
     async with AsyncSessionLocal() as session:
         client = await crud.get_client_by_telegram_id(session, tg_id)
     if not client:
-        await edit_or_send(cb, "⚠️ شما به عنوان مشتری ثبت نشده‌اید.", customer_main_kb())
+        await cb.message.answer("⚠️ شما به عنوان مشتری ثبت نشده‌اید.")
         return
 
     await state.update_data(client_id=client.id, client_name=client.business_name)
@@ -84,7 +85,6 @@ async def customer_feedback_confirm(cb: types.CallbackQuery, state: FSMContext):
         await edit_or_send(cb, "⚠️ اطلاعات ناقص است. لطفاً دوباره تلاش کنید.", customer_main_kb())
         return
 
-    # ذخیره بازخورد + لاگ و سپس ارسال به گروه/تاپیک (در صورت تنظیم در .env)
     async with AsyncSessionLocal() as session:
         fb = await crud.create_feedback(
             session,
@@ -101,11 +101,14 @@ async def customer_feedback_confirm(cb: types.CallbackQuery, state: FSMContext):
         )
         client = await crud.get_client_by_id(session, data["client_id"])
 
-    # 🔔 نوتیفای گروه/تاپیک «گزارش مشتری‌ها»
     try:
-        await notify_client_feedback(cb.message.bot, fb, client=client)
+        await notify_feedback(
+            cb.message.bot,
+            client_name=(client.business_name if client else data.get("client_name")),
+            score=int(data["score"]),
+            comment=data.get("comment")
+        )
     except Exception:
-        # خطای ارسال گروه نباید روند کاربر را خراب کند
         pass
 
     await state.clear()
@@ -115,22 +118,37 @@ async def customer_feedback_confirm(cb: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "customer_summary")
 async def customer_summary(cb: types.CallbackQuery, state: FSMContext):
     tg_id = cb.from_user.id
+    end_dt = datetime.utcnow()
+    start_dt = end_dt - timedelta(days=7)
+
     async with AsyncSessionLocal() as session:
         client = await crud.get_client_by_telegram_id(session, tg_id)
         if not client:
             await cb.message.answer("⚠️ شما به عنوان مشتری ثبت نشده‌اید.")
             return
 
-        act_cnt = await crud.count_activities_for_client(session, client.id)
+        act_cnt_7d = await crud.count_activities_in_range(session, client.id, start_dt, end_dt)
         fb_avg = await crud.avg_feedback_for_client(session, client.id)
+        kpi = await crud.get_client_kpi(session, client.id)
+
+    target = (kpi.target_per_week if kpi else 0)
+    status_emoji = "⚪️"
+    if target > 0:
+        ratio = act_cnt_7d / max(target, 1)
+        if ratio >= 1.0:
+            status_emoji = "🟢"
+        elif ratio >= KPI_YELLOW_RATIO:
+            status_emoji = "🟡"
+        else:
+            status_emoji = "🔴"
 
     fb_avg_h = f"{fb_avg:.2f}" if fb_avg is not None else "-"
     txt = (
         "📌 عملکرد تیم مارکتینگ\n\n"
         f"- نام کسب‌وکار: {client.business_name}\n"
-        f"- تعداد فعالیت‌ها: {act_cnt}\n"
-        f"- KPI پیشرفت: - / - (به‌زودی)\n"
+        f"- تعداد فعالیت‌ها (۷ روز اخیر): {act_cnt_7d}\n"
+        f"- KPI پیشرفت (۷ روز): {act_cnt_7d} / {target}\n"
+        f"- وضعیت مشتری: {status_emoji}\n"
         f"- بازخورد میانگین: {fb_avg_h}\n"
-        f"- وضعیت مشتری: - (🟢/🟡/🔴 به‌زودی)\n"
     )
     await cb.message.answer(txt, reply_markup=customer_main_kb())
