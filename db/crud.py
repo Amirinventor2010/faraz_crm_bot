@@ -27,7 +27,7 @@ async def is_admin_tgid(session: AsyncSession, tg_id: int) -> bool:
     if _is_admin_tg(tg_id):
         return True
     res = await session.execute(select(User).where(User.telegram_id == tg_id))
-    u = res.scalar_one_or_none
+    u = res.scalar_one_or_none()
     return bool(u and u.role == "ADMIN")
 
 
@@ -168,7 +168,7 @@ async def last_activity_ts(session: AsyncSession, client_id: int) -> Optional[da
     return res.scalar_one_or_none()
 
 
-# --- for Staff reports ---
+# --- برای گزارش نیرو ---
 async def count_activities_in_range_by_staff(
     session: AsyncSession, staff_id: int, start_dt: datetime, end_dt: datetime
 ) -> int:
@@ -189,14 +189,24 @@ async def last_activity_ts_for_staff(session: AsyncSession, staff_id: int) -> Op
     return res.scalar_one_or_none()
 
 
-async def avg_feedback_for_staff_clients(session: AsyncSession, staff_id: int) -> Optional[float]:
-    # میانگین رضایت برای تمام مشتریانی که به این نیرو تخصیص یافته‌اند
-    sub = select(Client.id).where(Client.assigned_staff_id == staff_id).subquery()
+async def list_recent_activities_for_client(
+    session: AsyncSession, client_id: int, limit: int = 10
+) -> List[Activity]:
+    order_col = getattr(Activity, "ts", Activity.created_at)
     res = await session.execute(
-        select(func.avg(Feedback.score)).where(Feedback.client_id.in_(select(sub)))
+        select(Activity).where(Activity.client_id == client_id).order_by(desc(order_col)).limit(limit)
     )
-    val = res.scalar()
-    return float(val) if val is not None else None
+    return list(res.scalars())
+
+
+async def list_recent_activities_for_staff(
+    session: AsyncSession, staff_id: int, limit: int = 10
+) -> List[Activity]:
+    order_col = getattr(Activity, "ts", Activity.created_at)
+    res = await session.execute(
+        select(Activity).where(Activity.staff_id == staff_id).order_by(desc(order_col)).limit(limit)
+    )
+    return list(res.scalars())
 
 
 # ---------------------------
@@ -213,6 +223,27 @@ async def create_feedback(session: AsyncSession, **data) -> Feedback:
 async def avg_feedback_for_client(session: AsyncSession, client_id: int) -> Optional[float]:
     res = await session.execute(
         select(func.avg(Feedback.score)).where(Feedback.client_id == client_id)
+    )
+    val = res.scalar()
+    return float(val) if val is not None else None
+
+
+async def list_recent_feedback_for_client(
+    session: AsyncSession, client_id: int, limit: int = 10
+) -> List[Feedback]:
+    res = await session.execute(
+        select(Feedback).where(Feedback.client_id == client_id).order_by(desc(Feedback.created_at)).limit(limit)
+    )
+    return list(res.scalars())
+
+
+async def avg_feedback_for_staff_clients(session: AsyncSession, staff_id: int) -> Optional[float]:
+    """
+    میانگین امتیاز بازخورد تمام مشتریانی که به این نیرو تخصیص یافته‌اند.
+    """
+    subq = select(Client.id).where(Client.assigned_staff_id == staff_id)
+    res = await session.execute(
+        select(func.avg(Feedback.score)).where(Feedback.client_id.in_(subq))
     )
     val = res.scalar()
     return float(val) if val is not None else None

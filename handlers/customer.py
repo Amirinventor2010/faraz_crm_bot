@@ -10,6 +10,7 @@ from db import crud
 from keyboards.customer import customer_main_kb, feedback_score_kb
 from keyboards.common import back_reply_kb, confirm_inline_kb, BACK_TEXT
 from utils.ui import edit_or_send
+from utils.notify import notify_client_feedback  # 🔔 ارسال نوتیفیکیشن بازخورد به گروه/تاپیک
 
 router = Router()
 
@@ -31,7 +32,7 @@ async def customer_add_feedback_start(cb: types.CallbackQuery, state: FSMContext
     async with AsyncSessionLocal() as session:
         client = await crud.get_client_by_telegram_id(session, tg_id)
     if not client:
-        await cb.message.answer("⚠️ شما به عنوان مشتری ثبت نشده‌اید.")
+        await edit_or_send(cb, "⚠️ شما به عنوان مشتری ثبت نشده‌اید.", customer_main_kb())
         return
 
     await state.update_data(client_id=client.id, client_name=client.business_name)
@@ -83,6 +84,7 @@ async def customer_feedback_confirm(cb: types.CallbackQuery, state: FSMContext):
         await edit_or_send(cb, "⚠️ اطلاعات ناقص است. لطفاً دوباره تلاش کنید.", customer_main_kb())
         return
 
+    # ذخیره بازخورد + لاگ و سپس ارسال به گروه/تاپیک (در صورت تنظیم در .env)
     async with AsyncSessionLocal() as session:
         fb = await crud.create_feedback(
             session,
@@ -97,6 +99,14 @@ async def customer_feedback_confirm(cb: types.CallbackQuery, state: FSMContext):
             entity_id=fb.id,
             diff_json=data
         )
+        client = await crud.get_client_by_id(session, data["client_id"])
+
+    # 🔔 نوتیفای گروه/تاپیک «گزارش مشتری‌ها»
+    try:
+        await notify_client_feedback(cb.message.bot, fb, client=client)
+    except Exception:
+        # خطای ارسال گروه نباید روند کاربر را خراب کند
+        pass
 
     await state.clear()
     await edit_or_send(cb, "✅ بازخورد شما ثبت شد. ممنون از همکاری شما!", customer_main_kb())

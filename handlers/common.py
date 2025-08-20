@@ -16,6 +16,7 @@ from utils.ui import edit_or_send
 
 router = Router()
 
+
 def _is_admin_tg(tg_id: int) -> bool:
     ids = ADMIN_TELEGRAM_IDS
     if isinstance(ids, (list, tuple, set)):
@@ -24,11 +25,24 @@ def _is_admin_tg(tg_id: int) -> bool:
         norm = {s.strip() for s in str(ids).split(",") if s.strip()}
     return str(tg_id) in norm
 
+
+# -----------------------------
+# /start
+# -----------------------------
 @router.message(Command("start"))
 async def start(msg: types.Message, state: FSMContext):
     await state.clear()
-    await edit_or_send(msg, "به بات مدیریت مارکتینگ فراز خوش آمدید.\nنوع پنل را انتخاب کنید:", entry_menu_kb())
+    await edit_or_send(
+        msg,
+        "به بات مدیریت مارکتینگ فراز خوش آمدید.\n"
+        "نوع پنل را انتخاب کنید:",
+        entry_menu_kb()
+    )
 
+
+# -----------------------------
+# انتخاب نقش از منوی ورودی
+# -----------------------------
 @router.callback_query(F.data.in_({"enter_admin", "enter_staff", "enter_customer"}))
 async def entry_choose_role(cb: types.CallbackQuery, state: FSMContext):
     user_tg_id = cb.from_user.id
@@ -59,12 +73,33 @@ async def entry_choose_role(cb: types.CallbackQuery, state: FSMContext):
                 await edit_or_send(cb, "⚠️ شما به عنوان مشتری ثبت نشده‌اید.", entry_menu_kb(), force_new=True)
             return
 
+
+# -----------------------------
+# بازگشت به منوی شروع (از کلید «بازگشت» یا دکمه‌های پنل)
+# -----------------------------
 @router.callback_query(F.data == "back_to_entry")
 async def back_to_entry_cb(cb: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await edit_or_send(cb, "بازگشت به منوی شروع.\nنوع پنل را انتخاب کنید:", entry_menu_kb())
 
+
 @router.message(F.text == BACK_TEXT)
 async def back_to_entry_msg(msg: types.Message, state: FSMContext):
     await state.clear()
     await edit_or_send(msg, "بازگشت به منوی شروع.\nنوع پنل را انتخاب کنید:", entry_menu_kb())
+
+
+# -----------------------------
+# ابزار کمکی: /whereami
+# برای دریافت chat_id و message_thread_id در گروه‌های تاپیک‌دار
+# -----------------------------
+@router.message(Command("whereami"))
+async def whereami(msg: types.Message):
+    thread_id = getattr(msg, "message_thread_id", None)
+    text = (
+        "ℹ️ اطلاعات موقعیت فعلی\n"
+        f"chat_id = {msg.chat.id}\n"
+        f"message_thread_id = {thread_id}"
+    )
+    # استفاده از reply تا پاسخ زیر همان پیام نمایش داده شود
+    await msg.reply(text)

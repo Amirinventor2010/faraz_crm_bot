@@ -15,6 +15,7 @@ from keyboards.staff import (
 )
 from keyboards.common import back_reply_kb, confirm_inline_kb, BACK_TEXT
 from utils.ui import edit_or_send
+from utils.notify import notify_staff_activity  # 🔔 ارسال نوتیفیکیشن به گروه/تاپیک
 
 router = Router()
 
@@ -42,16 +43,16 @@ async def add_activity_start(cb: types.CallbackQuery, state: FSMContext):
     async with AsyncSessionLocal() as session:
         user = await crud.get_user_by_telegram_id(session, staff_tg)
         if not user or user.status != STATUS_ACTIVE:
-            await cb.message.answer("⚠️ دسترسی شما به عنوان نیروی فعال تأیید نشد.")
+            await edit_or_send(cb, "⚠️ دسترسی شما به عنوان نیروی فعال تأیید نشد.", staff_main_kb())
             return
         clients = await crud.list_clients_for_staff(session, user.id)
 
     if not clients:
-        await cb.message.answer("هیچ مشتری فعالی برای شما تعریف نشده است.")
+        await edit_or_send(cb, "هیچ مشتری فعالی برای شما تعریف نشده است.", staff_main_kb())
         return
 
     await state.set_state(AddActivity.pick_client)
-    await cb.message.answer("مشتری را انتخاب کنید:", reply_markup=clients_inline_kb(clients))
+    await edit_or_send(cb, "مشتری را انتخاب کنید:", clients_inline_kb(clients))
 
 @router.callback_query(AddActivity.pick_client, F.data.startswith("staff_pick_client:"))
 async def add_activity_pick_client(cb: types.CallbackQuery, state: FSMContext):
@@ -212,6 +213,7 @@ async def add_activity_confirm_or_cancel(cb: types.CallbackQuery, state: FSMCont
         return
 
     staff_tg = cb.from_user.id
+    # ساخت و لاگ + ارسال نوتیفای به گروه/تاپیک
     async with AsyncSessionLocal() as session:
         user = await crud.get_user_by_telegram_id(session, staff_tg)
         if not user:
@@ -237,6 +239,15 @@ async def add_activity_confirm_or_cancel(cb: types.CallbackQuery, state: FSMCont
             entity_id=act.id,
             diff_json=data
         )
+        # برای پیام گروه، نام مشتری را بگیریم
+        client = await crud.get_client_by_id(session, data["client_id"])
+
+    # 🔔 ارسال به گروه (اگر REPORTS_GROUP_ID/STAFF_TOPIC_ID در .env تنظیم شده باشد)
+    try:
+        await notify_staff_activity(cb.message.bot, act, client=client, staff=user)
+    except Exception:
+        # خطاهای ارسال گروه باعث Fail شدن ثبت فعالیت نشود
+        pass
 
     await state.clear()
     await edit_or_send(cb, "✅ فعالیت ثبت شد.", staff_main_kb())

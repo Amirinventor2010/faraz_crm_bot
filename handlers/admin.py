@@ -31,7 +31,7 @@ router = Router()
 
 
 # -------------------------
-# ناوبری پنل مدیر (ویرایش پیام)
+# ناوبری پنل مدیر
 # -------------------------
 @router.callback_query(F.data == "admin_back_main")
 async def admin_back_main(cb: types.CallbackQuery, state: FSMContext):
@@ -60,7 +60,7 @@ async def admin_kpi_menu(cb: types.CallbackQuery, state: FSMContext):
 
 
 # -----------------------------
-# ثبت نیروی مارکتینگ (با پیش‌نمایش)
+# ثبت نیروی مارکتینگ
 # -----------------------------
 class AddStaff(StatesGroup):
     waiting_role = State()
@@ -250,7 +250,7 @@ async def add_staff_confirm_or_cancel(cb: types.CallbackQuery, state: FSMContext
 
 
 # -----------------------------
-# ثبت مشتری (با پیش‌نمایش)
+# ثبت مشتری
 # -----------------------------
 class AddClient(StatesGroup):
     business_name = State()
@@ -472,7 +472,7 @@ async def add_client_confirm_or_cancel(cb: types.CallbackQuery, state: FSMContex
 
 
 # -----------------------------
-# تخصیص مشتری به نیرو (دکمه‌ای، دو مرحله‌ای)
+# تخصیص مشتری به نیرو (دکمه‌ای)
 # -----------------------------
 class AssignClient(StatesGroup):
     pick_client = State()
@@ -716,6 +716,8 @@ async def admin_report_one_client(cb: types.CallbackQuery, state: FSMContext):
         fb_avg = await crud.avg_feedback_for_client(session, client_id)
         last_ts = await crud.last_activity_ts(session, client_id)
         staff = await crud.get_user_by_id(session, c.assigned_staff_id) if c.assigned_staff_id else None
+        recent_acts = await crud.list_recent_activities_for_client(session, client_id, limit=10)
+        recent_fb = await crud.list_recent_feedback_for_client(session, client_id, limit=10)
 
     status_emoji = "⚪️"
     if target > 0:
@@ -731,14 +733,43 @@ async def admin_report_one_client(cb: types.CallbackQuery, state: FSMContext):
     last_h = last_ts.strftime("%Y-%m-%d %H:%M") if last_ts else "-"
     staff_h = f"{staff.name} (ID={staff.id})" if staff else "-"
 
-    txt = (
-        f"📄 گزارش مشتری: {c.business_name} (#{c.id})\n"
-        f"- وضعیت KPI (۷روز): {status_emoji}  {acts_7d} / {target}\n"
-        f"- میانگین رضایت: {fb_h}\n"
-        f"- آخرین فعالیت: {last_h}\n"
-        f"- نیروی تخصیص‌یافته: {staff_h}\n"
-    )
-    await edit_or_send(cb, txt, back_to_clients_reports_kb())
+    lines = [
+        f"📄 گزارش مشتری: {c.business_name} (#{c.id})",
+        f"- وضعیت KPI (۷روز): {status_emoji}  {acts_7d} / {target}",
+        f"- میانگین رضایت: {fb_h}",
+        f"- آخرین فعالیت: {last_h}",
+        f"- نیروی تخصیص‌یافته: {staff_h}",
+    ]
+
+    # ریز فعالیت‌های اخیر
+    if recent_acts:
+        lines.append("\n📝 فعالیت‌های اخیر (۱۰ مورد آخر):")
+        for a in recent_acts:
+            ts = getattr(a, "ts", getattr(a, "created_at", None))
+            ts_h = ts.strftime("%Y-%m-%d %H:%M") if ts else "-"
+            typ = getattr(a, "activity_type", "-")
+            plat = getattr(a, "platform", "-")
+            goal = getattr(a, "goal", None)
+            res = getattr(a, "initial_result", None)
+            evd = getattr(a, "evidence_link", None)
+            extra = []
+            if goal: extra.append(f"هدف: {goal}")
+            if res: extra.append(f"نتیجه: {res}")
+            if evd: extra.append(f"مدرک: {evd}")
+            extra_h = " | ".join(extra) if extra else "-"
+            lines.append(f"• {ts_h} — {typ} در {plat} — {extra_h}")
+
+    # بازخوردهای اخیر
+    if recent_fb:
+        lines.append("\n💬 بازخوردهای اخیر (۱۰ مورد آخر):")
+        for f in recent_fb:
+            ts_h = f.created_at.strftime("%Y-%m-%d %H:%M")
+            score = int(getattr(f, "score", 0) or 0)
+            stars = "⭐" * max(1, min(5, score))
+            comment = getattr(f, "comment", None) or "-"
+            lines.append(f"• {ts_h} — {stars} ({score}/5) — {comment}")
+
+    await edit_or_send(cb, "\n".join(lines), back_to_clients_reports_kb())
 
 
 @router.callback_query(F.data == "admin_reports_staff")
@@ -766,19 +797,41 @@ async def admin_report_one_staff(cb: types.CallbackQuery, state: FSMContext):
         clients = await crud.list_clients_for_staff(session, staff_id)
         fb_avg = await crud.avg_feedback_for_staff_clients(session, staff_id)
         last_ts = await crud.last_activity_ts_for_staff(session, staff_id)
+        recent_acts = await crud.list_recent_activities_for_staff(session, staff_id, limit=10)
 
     clients_h = ", ".join([c.business_name for c in clients]) if clients else "-"
     fb_h = f"{fb_avg:.2f}" if fb_avg is not None else "-"
     last_h = last_ts.strftime("%Y-%m-%d %H:%M") if last_ts else "-"
 
-    txt = (
-        f"👤 گزارش نیرو: {s.name or 'بدون‌نام'} (ID={s.id})\n"
-        f"- فعالیت‌ها (۷ روز اخیر): {acts_7d}\n"
-        f"- مشتریان تحت پوشش: {clients_h}\n"
-        f"- میانگین رضایت مشتریان: {fb_h}\n"
-        f"- آخرین فعالیت: {last_h}\n"
-    )
-    await edit_or_send(cb, txt, back_to_staff_reports_kb())
+    lines = [
+        f"👤 گزارش نیرو: {s.name or 'بدون‌نام'} (ID={s.id})",
+        f"- فعالیت‌ها (۷ روز اخیر): {acts_7d}",
+        f"- مشتریان تحت پوشش: {clients_h}",
+        f"- میانگین رضایت مشتریان: {fb_h}",
+        f"- آخرین فعالیت: {last_h}",
+    ]
+
+    if recent_acts:
+        lines.append("\n📝 فعالیت‌های اخیر (۱۰ مورد آخر):")
+        for a in recent_acts:
+            ts = getattr(a, "ts", getattr(a, "created_at", None))
+            ts_h = ts.strftime("%Y-%m-%d %H:%M") if ts else "-"
+            typ = getattr(a, "activity_type", "-")
+            plat = getattr(a, "platform", "-")
+            goal = getattr(a, "goal", None)
+            res = getattr(a, "initial_result", None)
+            evd = getattr(a, "evidence_link", None)
+            # نام مشتری مربوط به این فعالیت
+            client_id = getattr(a, "client_id", None)
+            client_part = f"(#{client_id})" if client_id else ""
+            extra = []
+            if goal: extra.append(f"هدف: {goal}")
+            if res: extra.append(f"نتیجه: {res}")
+            if evd: extra.append(f"مدرک: {evd}")
+            extra_h = " | ".join(extra) if extra else "-"
+            lines.append(f"• {ts_h} — {typ} در {plat} {client_part} — {extra_h}")
+
+    await edit_or_send(cb, "\n".join(lines), back_to_staff_reports_kb())
 
 
 # -----------------------------
