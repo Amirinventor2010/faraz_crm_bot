@@ -1,146 +1,336 @@
-# 🤖 ربات تلگرام مدیریت مشتریان فراز (Faraz CRM)
+# 🤖 Faraz CRM & Marketing Telegram Bot
+<!-- Language switch: [🇮🇷 فارسی](#-راهنمای-کامل-فارسی) | [🇬🇧 English](#-full-readme-english) -->
 
-<div dir="rtl">
-
-این پروژه یک ربات تلگرامی قدرتمند است که با زبان پایتون و کتابخانه `pyTelegramBotAPI` توسعه داده شده است. هدف اصلی این ربات، ساده‌سازی فرآیند ثبت و مدیریت اطلاعات مشتریان برای سیستم CRM فراز از طریق یک رابط کاربری تعاملی و دوستانه در تلگرام است.
-
-[![Python Version](https://img.shields.io/badge/Python-3.8%2B-blue?logo=python)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Aiogram](https://img.shields.io/badge/Aiogram-3.x-2ea44f)](https://docs.aiogram.dev/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Amirinventor2010/faraz_crm_bot?style=social)](https://github.com/Amirinventor2010/faraz_crm_bot/stargazers)
 
-</div>
+---
+
+## 🇮🇷 راهنمای کامل (فارسی)
+
+### 📌 معرفی
+ربات تلگرام «فراز» یک بات مدیریتی برای **ثبت داده‌های تیم مارکتینگ و مشتریان، پایش KPI/SLA، دریافت بازخورد، و گزارش‌دهی** است. این پروژه با **Python 3.12 + Aiogram 3.x** توسعه یافته و برای استقرار تولیدی، **Docker Compose با معماری app + db (Postgres)** دارد. برای توسعهٔ سادهٔ محلی، می‌توانید از **SQLite** هم استفاده کنید.
+
+### ✨ ویژگی‌ها
+- **نقش‌ها:** مدیر / نیروی مارکتینگ / مشتری (منوهای اختصاصی و دسترسی‌های مجزا)
+- **KPI/SLA:** تعریف/ویرایش، KPIهای **هفتگی/ماهانه** (رشد فالوور، لید/فروش هر کانال: اینستاگرام/واتساپ/دیوار/ترب، نرخ تعامل، ریچ، تعداد کمپین، …)
+- **ثبت فعالیت‌های روزانه** و **بازخورد مشتری (امتیاز ۱–۵ + توضیح)** 
+- **گزارش‌ها و هشدارها:** وضعیت سبز/زرد/قرمز، عدم فعالیت، فروش/رضایت زیر آستانه، اختلاف گزارش
+- **خروجی‌گیری:** متن/CSV/Excel/PDF + امکان زمان‌بندی ارسال در تلگرام
+- **قابل توسعه:** اتصال به n8n/API داخلی، مهاجرت آسان دیتابیس، ثبت لاگ کامل
+
+### 🧱 تکنولوژی‌ها
+Python 3.12، Aiogram 3.x، SQLAlchemy (async)، Pydantic، **Postgres (Docker)**، SQLite (لوکال).
 
 ---
 
-## ✨ قابلیت‌های کلیدی
-
-<div dir="rtl">
-
-این ربات با تمرکز بر کارایی و سادگی، قابلیت‌های زیر را ارائه می‌دهد:
-
-*   ** خوشامدگویی و منوی شروع:** با ارسال دستور `/start`، ربات به کاربر خوشامد گفته و منوی اصلی را با دکمه‌های شیشه‌ای (Inline Keyboard) نمایش می‌دهد.
-*   ** ثبت مشتری چند مرحله‌ای:** فرآیند ثبت مشتری به صورت یک مکالمه هوشمند طراحی شده است:
-    1.  دریافت **نام کامل** مشتری.
-    2.  دریافت **شماره تماس** مشتری.
-    3.  دریافت **توضیحات** تکمیلی.
-    4.  تایید نهایی اطلاعات قبل از ثبت.
-*   ** رابط کاربری تعاملی:** استفاده از دکمه‌های شیشه‌ای برای بهبود تجربه کاربری و هدایت آسان کاربر در منوها.
-*   ** ساختار ماژولار:** کدها به صورت خوانا و در فایل‌های جداگانه برای توکن و منطق اصلی سازماندهی شده‌اند که توسعه و نگهداری را آسان می‌کند.
-*   ** آماده برای استقرار:** پروژه دارای فایل‌های `Procfile`، `runtime.txt` و `app.json` است که استقرار آن بر روی پلتفرم‌های ابری مانند Heroku را بسیار ساده می‌کند.
-
-</div>
+## 📂 ساختار پروژه
+```
+faraz_crm_bot/
+├─ app.py                   # نقطه شروع ربات
+├─ config.py                # بارگذاری ENV و تنظیمات
+├─ db/
+│  ├─ base.py               # Session/Engine
+│  ├─ models.py             # مدل‌ها
+│  └─ crud.py               # توابع دیتابیسی
+├─ handlers/                # هندلرهای نقش‌ها (admin/customer/staff/...)
+├─ keyboards/               # کیبوردهای اینلاین/ریپلای
+├─ services/                # سرویس‌ها (auth/kpi/...)
+├─ utils/                   # ابزارها و UI/notify/constants/validators
+├─ requirements.txt
+├─ Dockerfile
+├─ .dockerignore
+├─ docker-compose.yml
+└─ README.md
+```
 
 ---
 
-## 🚀 راهنمای نصب و راه‌اندازی
+## ⚙️ متغیرهای محیطی (.env)
+فایل `.env` را در **ریشه پروژه** (کنار `docker-compose.yml`) بسازید:
 
-<div dir="rtl">
+```dotenv
+# --- Bot ---
+BOT_TOKEN=xxxx:yyyy
+ADMIN_TELEGRAM_IDS=5010464861,114917704
 
-برای اجرای این ربات بر روی سیستم محلی خود یا یک سرور، مراحل زیر را با دقت دنبال کنید.
+# --- Database (Production via Docker: Postgres) ---
+DB_NAME=farazdb
+DB_USER=bot
+DB_PASSWORD=botpass
+DB_URL=postgresql+asyncpg://bot:botpass@db:5432/farazdb
 
-### پیش‌نیازها
+# --- Optional ---
+REPORTS_GROUP_ID=-1002782690499
+STAFF_TOPIC_ID=2
+CLIENT_TOPIC_ID=4
+```
 
-*   **[پایتون 3.8](https://www.python.org/downloads/)** یا نسخه‌های جدیدتر
-*   **ابزار مدیریت بسته `pip`** (معمولاً همراه پایتون نصب می‌شود)
-*   **یک توکن ربات تلگرام:** برای دریافت توکن، باید یک ربات جدید در تلگرام از طریق [@BotFather](https.t.me/BotFather) بسازید. [16]
+> نکات:
+> - **هرگز** `.env` را کامیت نکنید. در صورت افشا، توکن را **rotate** کنید.
+> - برای توسعه محلی بدون Docker می‌توانید از SQLite استفاده کنید:
+>   `DB_URL=sqlite+aiosqlite:///./faraz.sqlite3`
 
-### مراحل نصب
+---
 
-**۱. کلون کردن مخزن پروژه:**
+## 🧪 اجرای محلی (بدون Docker)
+پیش‌نیاز: **Python 3.12**
+```bash
+python -m venv .venv
 
-ابتدا پروژه را از گیت‌هاب بر روی سیستم خود کلون کنید:
+# Windows (PowerShell)
+.\.venv\Scripts\Activate.ps1
+# Linux/Mac
+source .venv/bin/activate
+
+python -m pip install --upgrade pip wheel
+pip install -r requirements.txt
+
+# ساخت .env مطابق بالا (برای لوکال می‌توانید SQLite بگذارید)
+# DB_URL=sqlite+aiosqlite:///./faraz.sqlite3
+
+python app.py
+```
+
+> ویندوز و مشکل event loop؟ بدون تغییر کد این‌طور اجرا کنید:
+```powershell
+.\.venv\Scripts\python.exe -c "import asyncio, runpy; asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy()); runpy.run_path('app.py')"
+```
+
+---
+
+## 🚀 استقرار تولیدی با Docker (app + db/Postgres)
+این پروژه با **Postgres** به‌صورت دو سرویس `app` و `db` اجرا می‌شود.
+
+### 1) پیش‌نیاز
+- Docker Desktop (Windows) یا Docker + Compose (Linux)
+- دسترسی اینترنت سرور برای ارتباط بات با تلگرام
+
+### 2) دریافت سورس روی سرور
 ```bash
 git clone https://github.com/Amirinventor2010/faraz_crm_bot.git
 cd faraz_crm_bot
 ```
 
-**۲. ساخت و فعال‌سازی محیط مجازی (Virtual Environment):**
+### 3) ایجاد `.env` (طبق بخش بالا)
 
-استفاده از محیط مجازی به شدت توصیه می‌شود تا وابستگی‌های پروژه با سایر پروژه‌های شما تداخل نداشته باشند.
+### 4) Build & Run
 ```bash
-# ساخت محیط مجازی
-python3 -m venv venv
-
-# فعال‌سازی در ویندوز
-venv\Scripts\activate
-
-# فعال‌سازی در لینوکس و مک‌اواس
-source venv/bin/activate
+docker compose up -d --build
 ```
 
-**۳. نصب کتابخانه‌های مورد نیاز:**
-
-تمام وابستگی‌های پروژه که در فایل `requirements.txt` لیست شده‌اند را با دستور زیر نصب کنید:
+### 5) مشاهده لاگ‌ها
 ```bash
-pip install -r requirements.txt
+docker compose logs -f
 ```
 
-### پیکربندی
-
-**۱. ایجاد فایل پیکربندی:**
-
-فایل `config.py` در این پروژه برای نگهداری توکن ربات شما استفاده می‌شود. مطمئن شوید که این فایل حاوی متغیر زیر است:
-
-```python
-# config.py
-API_KEY = "YOUR_TELEGRAM_BOT_TOKEN"
-```
-
-**مهم:** توکن ربات خود را که از BotFather دریافت کرده‌اید، به جای `YOUR_TELEGRAM_BOT_TOKEN` قرار دهید.
-
-**⚠️ نکته امنیتی:** برای جلوگیری از افشای توکن ربات، هرگز فایل `config.py` را در مخزن عمومی گیت‌هاب خود قرار ندهید. بهترین روش، افزودن نام این فایل به `.gitignore` است:
+### 6) توقف/شروع/ری‌استارت
 ```bash
-echo "config.py" >> .gitignore
+docker compose stop
+docker compose start
+docker compose restart
 ```
-روش بهتر، خواندن توکن از متغیرهای محیطی سیستم (Environment Variables) است.
+
+### 7) آپدیت نسخه
+```bash
+git pull
+docker compose up -d --build
+```
 
 ---
 
-## ▶️ نحوه اجرا
+## 💾 بکاپ/بازگردانی دیتابیس (Postgres)
+> نام سرویس دیتابیس در Compose: `db`
 
-<div dir="rtl">
-
-پس از اتمام مراحل نصب و پیکربندی، ربات آماده اجرا است. دستور زیر را در ترمینال خود وارد کنید:
-
+**بکاپ (pg_dump):**
 ```bash
-python bot.py
+docker exec -t db pg_dump -U "$DB_USER" -d "$DB_NAME" -F c -f /tmp/faraz_$(date +%F_%H%M).dump
+docker cp db:/tmp/faraz_$(date +%F_%H%M).dump ./backup/
 ```
 
-اگر همه چیز به درستی انجام شده باشد، ربات شما آنلاین شده و آماده دریافت دستورات در تلگرام خواهد بود.
+**بازگردانی (pg_restore):**
+```bash
+docker cp ./backup/faraz_YYYY-MM-DD_HHMM.dump db:/tmp/restore.dump
 
-</div>
+docker exec -it db dropdb -U "$DB_USER" "$DB_NAME"
+docker exec -it db createdb -U "$DB_USER" "$DB_NAME"
+docker exec -it db pg_restore -U "$DB_USER" -d "$DB_NAME" -c /tmp/restore.dump
 
----
+docker compose restart app
+```
 
-## ☁️ استقرار بر روی سرور
-
-<div dir="rtl">
-
-برای اینکه ربات شما به صورت ۲۴/۷ در دسترس باشد، باید آن را بر روی یک سرور یا پلتفرم ابری مستقر کنید. [6, 7]
-
-*   **Heroku:** این پروژه به دلیل داشتن فایل‌های `Procfile` و `runtime.txt` به طور کامل با Heroku سازگار است و به راحتی می‌توانید آن را روی این پلتفرم مستقر کنید.
-*   **سرور مجازی (VPS):** می‌توانید ربات را روی یک VPS لینوکسی با استفاده از ابزارهایی مانند `systemd` یا `supervisor` به صورت یک سرویس دائمی اجرا کنید تا حتی پس از بستن اتصال SSH، ربات به کار خود ادامه دهد.
-
-</div>
+> اگر ترجیح می‌دهید از SQLite در Docker استفاده کنید (تک‌سرویس)، در `.env`:
+> `DB_URL=sqlite+aiosqlite:///./data/faraz.sqlite3` و `/app/data` را به صورت bind/volume مانت کنید.
 
 ---
 
-## 🤝 مشارکت در پروژه
-
-<div dir="rtl">
-
-از مشارکت شما در این پروژه استقبال می‌کنیم! اگر ایده‌ای برای بهبود ربات دارید یا با مشکلی مواجه شدید، لطفاً یک **[Issue](https://github.com/Amirinventor2010/faraz_crm_bot/issues)** جدید در مخزن گیت‌هاب ثبت کنید.
-
-برای ارائه کد، می‌توانید یک **Pull Request** ارسال نمایید.
-
-</div>
+## 🛡️ نکات امنیتی و عملیاتی
+- اسرار را **کامیت نکنید**: `.env` فقط روی سرور بماند. در صورت نشت، **rotate** کنید.
+- اگر از گروه/تاپیک استفاده می‌کنید، بات باید ادمین گروه گزارش‌ها باشد.
+- در ویندوز، برای bind mount، در Docker Desktop درایو پروژه را در **File Sharing** اضافه کنید.
 
 ---
+
+## 🤝 مشارکت
+Issue و PR پذیرفته می‌شود. لطفاً PEP8 و Type Hints رعایت شود.
 
 ## 📄 لایسنس
+MIT
 
-<div dir="rtl">
+---
 
-این پروژه تحت لایسنس **MIT** منتشر شده است. برای جزئیات بیشتر، فایل `LICENSE` را مطالعه فرمایید.
+## 🇬🇧 Full README (English)
 
-</div>
+### 📌 Overview
+Faraz Bot is a Telegram assistant to **collect marketing/customer data, track KPIs/SLAs, capture client feedback, and deliver reports**—all inside Telegram. Built with **Python 3.12 + Aiogram 3.x**, production-ready with **Docker Compose (app + db/Postgres)**. For simple local development, you may use **SQLite**.
+
+### ✨ Features
+- **Roles:** Admin / Marketing Staff / Client (separate menus & permissions)
+- **KPI/SLA:** define & edit, **Weekly/Monthly KPIs** (follower growth; leads/sales per Instagram/WhatsApp/Divar/Torob; engagement rate; reach; campaigns…)
+- **Daily activities** logging & **client feedback** (rating 1–5 + comment)
+- **Reports & alerts:** green/yellow/red status; inactivity; low sales/satisfaction; mismatch
+- **Exports:** text/CSV/Excel/PDF + scheduled posting in Telegram
+- **Extensible:** n8n/internal APIs, easy DB migration, full auditing
+
+### 🧱 Stack
+Python 3.12, Aiogram 3.x, SQLAlchemy (async), Pydantic, **Postgres (Docker)**, SQLite (local).
+
+---
+
+## 📂 Project Layout
+```
+faraz_crm_bot/
+├─ app.py
+├─ config.py
+├─ db/ (base.py, models.py, crud.py)
+├─ handlers/ (admin/customer/staff/…)
+├─ keyboards/
+├─ services/ (auth.py, kpi.py, …)
+├─ utils/ (constants.py, notify.py, ui.py, validators.py)
+├─ requirements.txt
+├─ Dockerfile
+├─ .dockerignore
+├─ docker-compose.yml
+└─ README.md
+```
+
+---
+
+## ⚙️ Environment (.env)
+Create `.env` at repository root:
+
+```dotenv
+# --- Bot ---
+BOT_TOKEN=xxxx:yyyy
+ADMIN_TELEGRAM_IDS=5010464861,114917704
+
+# --- Database (Production via Docker: Postgres) ---
+DB_NAME=farazdb
+DB_USER=bot
+DB_PASSWORD=botpass
+DB_URL=postgresql+asyncpg://bot:botpass@db:5432/farazdb
+
+# --- Optional ---
+REPORTS_GROUP_ID=-1002782690499
+STAFF_TOPIC_ID=2
+CLIENT_TOPIC_ID=4
+```
+
+> For local development without Docker, you may use SQLite:
+> `DB_URL=sqlite+aiosqlite:///./faraz.sqlite3`
+
+---
+
+## 🧪 Local Run (without Docker)
+Prereq: **Python 3.12**
+```bash
+python -m venv .venv
+# Windows (PowerShell): .\.venv\Scripts\Activate.ps1
+# Linux/Mac:            source .venv/bin/activate
+
+python -m pip install --upgrade pip wheel
+pip install -r requirements.txt
+
+# Create .env (SQLite is fine locally)
+# DB_URL=sqlite+aiosqlite:///./faraz.sqlite3
+
+python app.py
+```
+
+> Windows event loop issue? Run without code change:
+```powershell
+.\.venv\Scripts\python.exe -c "import asyncio, runpy; asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy()); runpy.run_path('app.py')"
+```
+
+---
+
+## 🚀 Production with Docker (app + db/Postgres)
+### 1) Prerequisite
+- Docker Desktop (Windows) or Docker + Compose (Linux)
+
+### 2) Get sources
+```bash
+git clone https://github.com/Amirinventor2010/faraz_crm_bot.git
+cd faraz_crm_bot
+```
+
+### 3) Prepare `.env` (see above)
+
+### 4) Build & Run
+```bash
+docker compose up -d --build
+```
+
+### 5) Logs
+```bash
+docker compose logs -f
+```
+
+### 6) Stop/Start/Restart
+```bash
+docker compose stop
+docker compose start
+docker compose restart
+```
+
+### 7) Update
+```bash
+git pull
+docker compose up -d --build
+```
+
+---
+
+## 💾 Postgres Backup/Restore
+> Compose DB service name: `db`
+
+**Backup (pg_dump):**
+```bash
+docker exec -t db pg_dump -U "$DB_USER" -d "$DB_NAME" -F c -f /tmp/faraz_$(date +%F_%H%M).dump
+docker cp db:/tmp/faraz_$(date +%F_%H%M).dump ./backup/
+```
+
+**Restore (pg_restore):**
+```bash
+docker cp ./backup/faraz_YYYY-MM-DD_HHMM.dump db:/tmp/restore.dump
+docker exec -it db dropdb -U "$DB_USER" "$DB_NAME"
+docker exec -it db createdb -U "$DB_USER" "$DB_NAME"
+docker exec -it db pg_restore -U "$DB_USER" -d "$DB_NAME" -c /tmp/restore.dump
+docker compose restart app
+```
+
+---
+
+## 🧩 Alternative: Single-service Docker with SQLite
+- `.env`: `DB_URL=sqlite+aiosqlite:///./data/faraz.sqlite3`
+- Mount `/app/data` via bind/volume to persist the SQLite file.
+
+---
+
+## 🔐 Security & Ops
+- **Never commit secrets**; keep tokens in `.env` on server. If leaked, **rotate**.
+- Ensure the bot is admin of the reports group if you use topics.
+- On Windows bind mounts, share the drive in Docker Desktop (File Sharing).

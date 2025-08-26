@@ -1,0 +1,33 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: faraz_db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-farazdb}
+      POSTGRES_USER: ${DB_USER:-bot}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-botpass}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-bot} -d ${DB_NAME:-farazdb} -h 127.0.0.1 -p 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: faraz_crm_bot
+    env_file:
+      - .env
+    environment:
+      # اگر DB_URL را در .env ست نکردی، این پیش‌فرض به Postgres کانتینری وصل می‌شود
+      DB_URL: ${DB_URL:-postgresql+asyncpg://bot:botpass@db:5432/farazdb}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+    name: faraz_crm_pgdata
