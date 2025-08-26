@@ -1,0 +1,61 @@
+# --- Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+*.pyd
+
+# --- Virtual env
+.venv/
+venv/
+
+# --- Environment files (do NOT commit)
+.env
+.env.*
+.env.example
+
+# --- Databases (SQLite / etc.)
+*.sqlite3
+*.sqlite
+*.db
+*.db-journal
+*.sqlite3-shm
+*.sqlite3-wal
+faraz.sqlite3
+
+# --- Caches / temp / logs
+.cache/
+cache/
+tmp/
+temp/
+.pytest_cache/
+.mypy_cache/
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+coverage.*
+htmlcov/
+
+# --- Uploads & generated artifacts
+uploads/
+media/
+storage/
+files/
+exports/
+reports/
+out/
+# اگر استاتیک‌ها را build می‌کنی و ورژن نمی‌کنی، این را نگه دار؛
+# اگر می‌خواهی داخل ریپو باشند، این خط را حذف کن.
+staticfiles/
+
+# --- Telegram session files (اگر وجود دارد)
+*.session
+*.session-journal
+
+# --- Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
