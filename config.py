@@ -7,6 +7,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 DB_URL = os.getenv("DB_URL", "sqlite+aiosqlite:///./faraz.sqlite3")
 
 # لیست مدیرها: "5010464861,114917704"
+# @userdatailsbot برای دریافت ایدی عددی
 _raw_admin_ids = os.getenv("ADMIN_TELEGRAM_IDS", "")
 ADMIN_TELEGRAM_IDS = [s.strip() for s in _raw_admin_ids.split(",") if s.strip()]
 

@@ -24,10 +24,19 @@ from keyboards.admin import (
     report_clients_kb, report_staff_kb,
     back_to_clients_reports_kb, back_to_staff_reports_kb,
     sales_clients_kb,  # ✅ برای ثبت فروش
+    # --- جدید برای KPI مارکتینگ ---
+    admin_mkt_kpi_root_kb,
+    admin_mkt_kpi_metrics_kb,
+    mkt_kpi_report_scope_kb,
+    back_to_mkt_kpi_kb,
 )
 from keyboards.common import back_reply_kb, confirm_inline_kb, BACK_TEXT
 from utils.ui import edit_or_send
 from config import SALES_WARN_THRESHOLD  # ✅ آستانه هشدار فروش
+
+# --- سرویس KPI مارکتینگ + اعتبارسنجی عدد ---
+from services import kpi as kpi_service
+from utils.validators import parse_numeric
 
 router = Router()
 
@@ -109,7 +118,7 @@ async def add_staff_name(msg: types.Message, state: FSMContext):
         return
     await state.update_data(name=msg.text.strip())
     await state.set_state(AddStaff.waiting_tg_id)
-    await msg.answer("Telegram ID کاربر را وارد کنید (فقط عدد):", reply_markup=back_reply_kb())
+    await msg.answer("Telegram ID کاربر را وارد کنید (فقط عدد): @userdatailsbot ", reply_markup=back_reply_kb())
 
 
 @router.message(AddStaff.waiting_tg_id)
@@ -130,7 +139,7 @@ async def add_staff_tg(msg: types.Message, state: FSMContext):
 async def add_staff_phone(msg: types.Message, state: FSMContext):
     if msg.text == BACK_TEXT:
         await state.set_state(AddStaff.waiting_tg_id)
-        await msg.answer("Telegram ID کاربر را وارد کنید (فقط عدد):", reply_markup=back_reply_kb())
+        await msg.answer("Telegram ID کاربر را وارد کنید (فقط عدد):@userdatailsbot ", reply_markup=back_reply_kb())
         return
     phone = None if msg.text.strip() == '-' else msg.text.strip()
     await state.update_data(phone=phone)
@@ -407,7 +416,7 @@ async def client_status(msg: types.Message, state: FSMContext):
         return
     await state.update_data(status=status)
     await state.set_state(AddClient.telegram_id)
-    await msg.answer("Telegram ID مشتری؟ (فقط عدد – برای ورود پنل مشتری الزامی)", reply_markup=back_reply_kb())
+    await msg.answer("Telegram ID مشتری؟ (فقط عدد – برای ورود پنل مشتری الزامی)  @userdatailsbot ", reply_markup=back_reply_kb())
 
 
 @router.message(AddClient.telegram_id)
@@ -570,7 +579,7 @@ async def assign_pick_staff(cb: types.CallbackQuery, state: FSMContext):
 
 
 # -----------------------------
-# 🎯 KPI / SLA — تنظیم هدف هفتگی
+# 🎯 KPI / SLA — تنظیم هدف هفتگی مشتری
 # -----------------------------
 class KPISet(StatesGroup):
     pick_client = State()
@@ -632,9 +641,98 @@ async def kpi_confirm(cb: types.CallbackQuery, state: FSMContext):
     await edit_or_send(cb, "✅ KPI هفتگی ذخیره شد.", admin_kpi_kb())
 
 
-# =============================
+# ==========================================
+# 📈 KPI مارکتینگ (هفتگی/ماهانه) — جدید
+# ==========================================
+class AddMktKPI(StatesGroup):
+    waiting_value = State()
+
+
+@router.callback_query(F.data == "admin_mkt_kpi_menu")
+async def admin_mkt_kpi_menu(cb: types.CallbackQuery, state: FSMContext):
+    await edit_or_send(cb, "🎯 KPI مارکتینگ — نوع دوره را انتخاب کنید:", admin_mkt_kpi_root_kb())
+
+
+@router.callback_query(F.data.startswith("mkt_kpi_scope:"))
+async def admin_mkt_kpi_scope(cb: types.CallbackQuery, state: FSMContext):
+    scope = cb.data.split(":", 1)[1]  # weekly|monthly
+    await state.update_data(scope=scope)
+    await edit_or_send(cb, f"✅ {('هفتگی' if scope=='weekly' else 'ماهانه')} — متریک را انتخاب کنید:", admin_mkt_kpi_metrics_kb(scope))
+
+
+@router.callback_query(F.data.startswith("mkt_kpi_metric:"))
+async def admin_mkt_kpi_metric(cb: types.CallbackQuery, state: FSMContext):
+    _, payload = cb.data.split(":", 1)
+    scope, metric = payload.split(":", 1)
+    await state.update_data(scope=scope, metric=metric)
+    await state.set_state(AddMktKPI.waiting_value)
+    await cb.message.answer("مقدار این KPI را وارد کنید (فقط عدد؛ درصد را هم مثل 7 یا 7.5 بفرست):")
+
+
+@router.message(AddMktKPI.waiting_value)
+async def admin_mkt_kpi_value(msg: types.Message, state: FSMContext):
+    try:
+        _ = parse_numeric(msg.text)
+    except Exception:
+        await msg.answer("❌ عدد نامعتبر است. یک مقدار مثل 12 یا 12.5 یا 7% بفرست.")
+        return
+
+    data = await state.get_data()
+    scope = data.get("scope")
+    metric = data.get("metric")
+    if scope not in ("weekly","monthly") or not metric:
+        await state.clear()
+        await msg.answer("⚠️ کانتکست نامعتبر شد. دوباره از منوی KPI مارکتینگ شروع کن.", reply_markup=admin_mkt_kpi_root_kb())
+        return
+
+    async with AsyncSessionLocal() as session:
+        u = await crud.get_user_by_telegram_id(session, msg.from_user.id)
+        created_by_user_id = u.id if u else None
+        rec, ps, pe, val = await kpi_service.upsert_value(
+            session,
+            scope=scope, metric=metric, value_text=msg.text,
+            client_id=None, created_by_user_id=created_by_user_id,
+            week_start=0  # اگر هفته شنبه‌محور می‌خواهی: 5
+        )
+        try:
+            await crud.log_action(session, action="UPSERT", entity="KPIRecord", entity_id=rec.id,
+                                  diff_json={"scope":scope, "metric":metric, "value":val,
+                                             "period_start":ps.isoformat(), "period_end":pe.isoformat()})
+        except Exception:
+            pass
+
+    await state.clear()
+    fa = kpi_service.fa_name(metric)
+    fa_scope = "هفتگی" if scope=="weekly" else "ماهانه"
+    await msg.answer(
+        f"✅ ثبت شد\n\n"
+        f"- دوره: {fa_scope} ({ps} تا {pe})\n"
+        f"- متریک: {fa}\n"
+        f"- مقدار: {val}\n",
+        reply_markup=back_to_mkt_kpi_kb()
+    )
+
+
+# -----------------------------
+# 📊 گزارش KPI مارکتینگ
+# -----------------------------
+@router.callback_query(F.data == "admin_mkt_kpi_report")
+async def admin_mkt_kpi_report_menu(cb: types.CallbackQuery, state: FSMContext):
+    await edit_or_send(cb, "📊 گزارش KPI مارکتینگ — نوع دوره را انتخاب کن:", mkt_kpi_report_scope_kb())
+
+
+@router.callback_query(F.data.startswith("mkt_kpi_report_scope:"))
+async def admin_mkt_kpi_report_scope(cb: types.CallbackQuery, state: FSMContext):
+    scope = cb.data.split(":",1)[1]  # weekly|monthly
+    async with AsyncSessionLocal() as session:
+        data, ps, pe = await kpi_service.report_dict(session, scope=scope, week_start=0)
+    text = kpi_service.format_report_text(scope, ps, pe, data)
+    await edit_or_send(cb, text, back_to_mkt_kpi_kb())
+
+
+# -----------------------------
 # 💰 ثبت فروش جدید (فقط مدیر)
-# =============================
+# -----------------------------
 class AddSale(StatesGroup):
     pick_client = State()
     ts = State()
@@ -765,7 +863,7 @@ async def admin_add_sale_confirm(cb: types.CallbackQuery, state: FSMContext):
 
 
 # -----------------------------
-# 📊 گزارش‌ها
+# 📊 گزارش‌ها (هفتگی/مشتری/نیرو) + خروجی CSV
 # -----------------------------
 @router.callback_query(F.data == "admin_reports_weekly")
 async def admin_report_weekly(cb: types.CallbackQuery, state: FSMContext):
@@ -885,7 +983,6 @@ async def admin_report_one_client(cb: types.CallbackQuery, state: FSMContext):
         f"- نیروی تخصیص‌یافته: {staff_h}",
     ]
 
-    # ریز فعالیت‌های اخیر
     if recent_acts:
         lines.append("\n📝 فعالیت‌های اخیر (۱۰ مورد آخر):")
         for a in recent_acts:
@@ -903,7 +1000,6 @@ async def admin_report_one_client(cb: types.CallbackQuery, state: FSMContext):
             extra_h = " | ".join(extra) if extra else "-"
             lines.append(f"• {ts_h} — {typ} در {plat} — {extra_h}")
 
-    # فروش‌های اخیر
     if recent_sales:
         lines.append("\n💰 فروش‌های اخیر (۱۰ مورد آخر):")
         for s in recent_sales:
@@ -913,7 +1009,6 @@ async def admin_report_one_client(cb: types.CallbackQuery, state: FSMContext):
             note = s.note or "-"
             lines.append(f"• {ts_h} — مبلغ: {amt} — منبع: {src} — یادداشت: {note}")
 
-    # بازخوردهای اخیر
     if recent_fb:
         lines.append("\n💬 بازخوردهای اخیر (۱۰ مورد آخر):")
         for f in recent_fb:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
-from sqlalchemy import String, ForeignKey, DateTime, JSON, Text, Integer, Float
+from datetime import datetime, date
+from sqlalchemy import (
+    String, ForeignKey, DateTime, Date, JSON, Text, Integer, Float,
+    UniqueConstraint, Index
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -59,7 +62,7 @@ class Activity(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
-    staff_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    staff_id: Mapped[int] = mapped_column(ForeKey("users.id"), index=True) if False else mapped_column(ForeignKey("users.id"), index=True)
     activity_type: Mapped[str] = mapped_column(String(64))
     platform: Mapped[str | None] = mapped_column(String(64))
     ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
@@ -100,4 +103,30 @@ class AuditLog(Base):
     entity: Mapped[str]
     entity_id: Mapped[int | None]
     diff_json: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ============================
+#   📈 KPI مارکتینگ (جدید)
+# ============================
+class KPIRecord(Base):
+    __tablename__ = "kpi_records"
+    __table_args__ = (
+        UniqueConstraint("client_id", "scope", "metric", "period_start", "period_end", name="uq_kpi_period"),
+        Index("ix_kpi_lookup", "scope", "metric", "period_start", "period_end"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # اگر KPI سراسری شرکت است: client_id = None
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
+
+    scope: Mapped[str] = mapped_column(String(16))  # "weekly" | "monthly"
+    metric: Mapped[str] = mapped_column(String(64), index=True)
+
+    value: Mapped[float] = mapped_column(Float, default=0.0)
+
+    period_start: Mapped[date] = mapped_column(Date, index=True)
+    period_end:   Mapped[date] = mapped_column(Date, index=True)
+
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

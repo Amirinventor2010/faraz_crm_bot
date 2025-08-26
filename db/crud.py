@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from typing import List, Optional, Tuple
+from calendar import monthrange
 
 from sqlalchemy import select, update, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import User, Client, ClientKPI, Activity, Feedback, AuditLog, Sale
+from .models import User, Client, ClientKPI, Activity, Feedback, AuditLog, Sale, KPIRecord
 from utils.constants import ROLE_STAFF, STATUS_ACTIVE
 from config import ADMIN_TELEGRAM_IDS
 
@@ -105,7 +106,7 @@ async def count_clients_for_staff(session: AsyncSession, staff_id: int) -> int:
 
 
 # ---------------------------
-# KPI
+# KPI (Client Target Weekly)
 # ---------------------------
 async def upsert_client_kpi(
     session: AsyncSession, client_id: int, target_per_week: int, warn_ratio: float = 0.6
@@ -325,3 +326,129 @@ async def pick_staff_by_capacity(session: AsyncSession) -> Optional[User]:
         return None
     candidates.sort(key=lambda t: (t[0], t[1]))
     return candidates[0][2]
+
+
+# =========================================
+# 📆 مرزهای دوره (هفتگی/ماهانه) — جدید
+# =========================================
+def get_week_bounds(when: date | None = None, week_start: int = 0) -> tuple[date, date]:
+    """
+    week_start: Monday=0 ... Sunday=6. اگر شنبه‌محور می‌خواهی: 5
+    """
+    today = when or date.today()
+    diff = (today.weekday() - week_start) % 7
+    start = today - timedelta(days=diff)
+    end = start + timedelta(days=6)
+    return start, end
+
+
+def get_month_bounds(when: date | None = None) -> tuple[date, date]:
+    today = when or date.today()
+    start = today.replace(day=1)
+    end = today.replace(day=monthrange(today.year, today.month)[1])
+    return start, end
+
+
+# =========================================
+# 📈 Marketing KPI Records — جدید
+# =========================================
+async def upsert_kpi_record(
+    session: AsyncSession,
+    *,
+    scope: str,                 # "weekly" | "monthly"
+    metric: str,                # slug
+    value: float,
+    period_start: date,
+    period_end: date,
+    client_id: int | None = None,
+    created_by_user_id: int | None = None,
+) -> KPIRecord:
+    res = await session.execute(
+        select(KPIRecord).where(
+            KPIRecord.client_id == client_id,
+            KPIRecord.scope == scope,
+            KPIRecord.metric == metric,
+            KPIRecord.period_start == period_start,
+            KPIRecord.period_end == period_end,
+        )
+    )
+    rec = res.scalar_one_or_none()
+    if rec:
+        rec.value = value
+        rec.created_by_user_id = created_by_user_id
+        rec.created_at = datetime.utcnow()
+        await session.commit()
+        await session.refresh(rec)
+        return rec
+
+    rec = KPIRecord(
+        client_id=client_id,
+        scope=scope,
+        metric=metric,
+        value=value,
+        period_start=period_start,
+        period_end=period_end,
+        created_by_user_id=created_by_user_id,
+    )
+    session.add(rec)
+    await session.commit()
+    await session.refresh(rec)
+    return rec
+
+
+async def get_kpi_record(
+    session: AsyncSession,
+    *,
+    scope: str,
+    metric: str,
+    period_start: date,
+    period_end: date,
+    client_id: int | None = None,
+) -> Optional[KPIRecord]:
+    res = await session.execute(
+        select(KPIRecord).where(
+            KPIRecord.client_id == client_id,
+            KPIRecord.scope == scope,
+            KPIRecord.metric == metric,
+            KPIRecord.period_start == period_start,
+            KPIRecord.period_end == period_end,
+        )
+    )
+    return res.scalar_one_or_none()
+
+
+async def list_kpi_records_for_period(
+    session: AsyncSession,
+    *,
+    scope: str,
+    period_start: date,
+    period_end: date,
+    client_id: int | None = None,
+) -> List[KPIRecord]:
+    res = await session.execute(
+        select(KPIRecord).where(
+            KPIRecord.client_id == client_id,
+            KPIRecord.scope == scope,
+            KPIRecord.period_start == period_start,
+            KPIRecord.period_end == period_end,
+        ).order_by(KPIRecord.metric)
+    )
+    return list(res.scalars())
+
+
+async def kpi_report_dict(
+    session: AsyncSession,
+    *,
+    scope: str,
+    period_start: date,
+    period_end: date,
+    client_id: int | None = None,
+) -> dict[str, float]:
+    rows = await list_kpi_records_for_period(
+        session,
+        scope=scope,
+        period_start=period_start,
+        period_end=period_end,
+        client_id=client_id,
+    )
+    return {r.metric: float(r.value) for r in rows}
